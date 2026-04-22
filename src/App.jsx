@@ -947,7 +947,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
           { key: "measurement", label: "① 체형 측정" },
           { key: "inbody", label: "② 인바디 분석" },
           { key: "prescription", label: "③ 약 처방" },
-          { key: "visit", label: "④ 내방 치료" },
+          { key: "visit", label: "④ 침구실 치료" },
         ].map(t => (
           <button key={t.key} className={`tab ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>
             {t.label}
@@ -1514,7 +1514,7 @@ function InbodyTab({ patient, currentUser }) {
 // TAB 3: PRESCRIPTION
 // =============================================
 function PrescriptionTab({ patient, currentUser }) {
-  const [pkg, setPkg] = useState(null);
+  const [pkgs, setPkgs] = useState([]); // 전체 패키지 이력
   const [prescriptions, setAllPrescriptions] = useState([]);
   const [showPkgForm, setShowPkgForm] = useState(false);
   const [showRxForm, setShowRxForm] = useState(false);
@@ -1525,12 +1525,12 @@ function PrescriptionTab({ patient, currentUser }) {
   const [remainingInput, setRemainingInput] = useState({});
 
   const load = useCallback(async () => {
-    const { data: pkgs } = await supabase.from("packages").select("*").eq("patient_id", patient.id).eq("is_active", true).order("created_at", { ascending: false }).limit(1);
+    const { data: pkgData } = await supabase.from("packages").select("*").eq("patient_id", patient.id).eq("is_active", true).order("start_date", { ascending: true });
     const { data: rxs } = await supabase.from("prescriptions").select("*").eq("patient_id", patient.id).order("prescribed_at", { ascending: false });
     const { data: hcs } = await supabase.from("happycall_logs").select("*").in("prescription_id", (rxs||[]).map(r => r.id));
     const { data: upds } = await supabase.from("prescription_updates").select("*").in("prescription_id", (rxs||[]).map(r => r.id)).order("created_at", { ascending: false });
 
-    setPkg(pkgs?.[0] || null);
+    setPkgs(pkgData || []);
     setAllPrescriptions(rxs || []);
 
     const hcMap = {};
@@ -1544,21 +1544,37 @@ function PrescriptionTab({ patient, currentUser }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // 전체 패키지 합산 종료일 계산
+  const calcTotalEndDate = (allPkgs, extraMonths = 0, extraStart = null) => {
+    const list = [...(allPkgs || [])];
+    if (extraMonths && extraStart) list.push({ start_date: extraStart, package_months: extraMonths });
+    if (list.length === 0) return null;
+    // 가장 이른 시작일
+    const firstStart = list.slice().sort((a,b) => a.start_date.localeCompare(b.start_date))[0].start_date;
+    const totalDays = list.reduce((s, p) => s + Number(p.package_months) * 30, 0);
+    return addDays(firstStart, totalDays);
+  };
+
   const savePkg = async () => {
-    if (pkg) await supabase.from("packages").update({ is_active: false }).eq("id", pkg.id);
+    if (!pkgForm.start_date) { alert("시작일을 입력해주세요."); return; }
+    // 연장: 기존 패키지 유지, 새 패키지 추가
+    const endDate = calcTotalEndDate(pkgs, Number(pkgForm.package_months), pkgForm.start_date);
     const { error } = await supabase.from("packages").insert([{
       patient_id: patient.id,
       package_months: Number(pkgForm.package_months),
       start_date: pkgForm.start_date,
+      end_date: endDate,
       remaining_months: Number(pkgForm.package_months),
+      is_active: true,
     }]);
     if (error) { alert("저장 실패: " + error.message); return; }
     setShowPkgForm(false);
+    setPkgForm({ package_months: 3, start_date: today() });
     load();
   };
 
   const saveRx = async () => {
-    if (!pkg) { alert("먼저 패키지를 등록해주세요."); return; }
+    if (!pkgs || pkgs.length === 0) { alert("먼저 패키지를 등록해주세요."); return; }
     if (!rxForm.prescribed_at) { alert("처방일을 입력해주세요."); return; }
     if (!rxForm.duration_days || Number(rxForm.duration_days) < 1) { alert("처방 기간을 입력해주세요."); return; }
     const expectedEnd = addDays(rxForm.prescribed_at, Number(rxForm.duration_days));
@@ -1566,7 +1582,7 @@ function PrescriptionTab({ patient, currentUser }) {
     const reservationHappy = subtractBusinessDays(expectedEnd, 3);
     await supabase.from("prescriptions").insert([{
       patient_id: patient.id,
-      package_id: pkg.id,
+      package_id: pkgs[0]?.id,
       prescribed_at: rxForm.prescribed_at,
       medicine_type: rxForm.medicine_type,
       duration_days: Number(rxForm.duration_days),
@@ -1624,13 +1640,17 @@ function PrescriptionTab({ patient, currentUser }) {
   const activePrescriptions = prescriptions.filter(r => !r.is_completed);
   const completedPrescriptions = prescriptions.filter(r => r.is_completed);
 
-  // 패키지 시각화
+  // 패키지 시각화 (누적 합산)
   const renderPackageProgress = () => {
-    if (!pkg) return null;
-    const total = pkg.package_months;
-    const totalDays = total * 30;
+    if (!pkgs || pkgs.length === 0) return null;
+    const totalMonths = pkgs.reduce((s, p) => s + Number(p.package_months), 0);
+    const totalDays = totalMonths * 30;
+    // 가장 이른 시작일 기준 종료일
+    const sortedPkgs = [...pkgs].sort((a,b) => a.start_date.localeCompare(b.start_date));
+    const firstStart = sortedPkgs[0].start_date;
+    const endDate = addDays(firstStart, totalDays);
 
-    // 복용 완료된 처방의 duration_days 합산 (예약 해피콜 완료 OR 복용완료 처리)
+    // 복용 완료된 처방의 duration_days 합산
     const usedDays = prescriptions.reduce((sum, rx) => {
       const rxHCs = happycalls[rx.id] || [];
       const reservationDone = rxHCs.find(h => h.call_type === "reservation" && h.is_done);
@@ -1640,19 +1660,44 @@ function PrescriptionTab({ patient, currentUser }) {
 
     const remainingDays = Math.max(0, totalDays - usedDays);
     const remainingMonths = Math.round(remainingDays / 30 * 10) / 10;
-    const usedMonths = Math.min(total, Math.floor(usedDays / 30));
+    const usedMonths = Math.min(totalMonths, Math.floor(usedDays / 30));
 
     return (
-      <div className="pkg-status">
-        {Array.from({length: total}).map((_, i) => (
-          <div key={i} className={`pkg-month ${i < usedMonths ? "pkg-month-done" : "pkg-month-remaining"}`}>
-            {i < usedMonths ? "✓" : `${i+1}M`}
+      <div>
+        <div className="pkg-status" style={{marginBottom:8}}>
+          {Array.from({length: totalMonths}).map((_, i) => (
+            <div key={i} className={`pkg-month ${i < usedMonths ? "pkg-month-done" : "pkg-month-remaining"}`}>
+              {i < usedMonths ? "✓" : `${i+1}M`}
+            </div>
+          ))}
+          <div style={{marginLeft:8, fontSize:13, color:"var(--ink-muted)", alignSelf:"center"}}>
+            잔여 <strong style={{color:"var(--accent)"}}>약 {remainingMonths}개월</strong>
+            <span style={{color:"var(--ink-muted)", marginLeft:4}}>({remainingDays}일)</span>
           </div>
-        ))}
-        <div style={{marginLeft:8, fontSize:13, color:"var(--ink-muted)", alignSelf:"center"}}>
-          잔여 <strong style={{color:"var(--accent)"}}>약 {remainingMonths}개월</strong>
-          <span style={{color:"var(--ink-muted)", marginLeft:4}}>({remainingDays}일)</span>
         </div>
+        <div style={{display:"flex", gap:16, flexWrap:"wrap", fontSize:13}}>
+          <div>
+            <span style={{color:"var(--ink-muted)"}}>시작일 </span>
+            <strong>{formatDate(firstStart)}</strong>
+          </div>
+          <div>
+            <span style={{color:"var(--ink-muted)"}}>침구실 치료 종료일 </span>
+            <strong style={{color:"var(--warn)"}}>{formatDate(endDate)}</strong>
+          </div>
+          <div>
+            <span style={{color:"var(--ink-muted)"}}>총 패키지 </span>
+            <strong>{totalMonths}개월 ({totalDays}일)</strong>
+          </div>
+        </div>
+        {pkgs.length > 1 && (
+          <div style={{marginTop:8, fontSize:12, color:"var(--ink-muted)"}}>
+            {pkgs.map((p, i) => (
+              <span key={p.id} style={{marginRight:12}}>
+                {i === 0 ? "기본" : `연장 ${i}`}: {formatDate(p.start_date)} · {p.package_months}개월
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     );
   };
@@ -1727,10 +1772,10 @@ function PrescriptionTab({ patient, currentUser }) {
         <div className="section-header">
           <div className="section-title">📦 패키지 관리</div>
           <button className="btn btn-secondary btn-sm" onClick={() => setShowPkgForm(!showPkgForm)}>
-            {pkg ? "패키지 변경" : "패키지 등록"}
+"+ 패키지 추가 / 연장"
           </button>
         </div>
-        {pkg ? renderPackageProgress() : <div className="empty" style={{padding:12}}>등록된 패키지가 없습니다</div>}
+        {pkgs && pkgs.length > 0 ? renderPackageProgress() : <div className="empty" style={{padding:12}}>등록된 패키지가 없습니다</div>}
 
         {showPkgForm && (
           <div style={{marginTop:16, paddingTop:16, borderTop:"1px solid var(--border)"}}>
@@ -1868,6 +1913,7 @@ function VisitTab({ patient, currentUser }) {
   const [visits, setVisits] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ visited_at: today(), treatment_types: [], memo: "" });
+  const [treatmentEndDate, setTreatmentEndDate] = useState(null);
 
   const TREATMENTS = [
     { key: "general", label: "일반 관리" },
@@ -1881,6 +1927,16 @@ function VisitTab({ patient, currentUser }) {
   const load = useCallback(async () => {
     const { data } = await supabase.from("visits").select("*").eq("patient_id", patient.id).order("visited_at", { ascending: false });
     setVisits(data || []);
+    // 패키지 종료일 계산
+    const { data: pkgData } = await supabase.from("packages").select("*").eq("patient_id", patient.id).eq("is_active", true).order("start_date", { ascending: true });
+    if (pkgData && pkgData.length > 0) {
+      const totalDays = pkgData.reduce((s, p) => s + Number(p.package_months) * 30, 0);
+      const sortedPkgs = [...pkgData].sort((a,b) => a.start_date.localeCompare(b.start_date));
+      const firstStart = sortedPkgs[0].start_date;
+      setTreatmentEndDate(addDays(firstStart, totalDays));
+    } else {
+      setTreatmentEndDate(null);
+    }
   }, [patient.id]);
 
   useEffect(() => { load(); }, [load]);
@@ -1907,14 +1963,23 @@ function VisitTab({ patient, currentUser }) {
     <div>
       <div className="card">
         <div className="section-header">
-          <div className="section-title">🏥 내방 치료 기록</div>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>+ 내방 기록</button>
+          <div className="section-title">🏥 침구실 치료 기록</div>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>+ 치료 기록</button>
         </div>
+        {treatmentEndDate && (
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:16, padding:"10px 14px", background:"var(--warn-pale)", borderRadius:8, border:"1px solid #f5c6bd"}}>
+            <span style={{fontSize:13}}>📅 패키지 침구실 치료 종료일</span>
+            <strong style={{color:"var(--warn)", fontSize:15}}>{formatDate(treatmentEndDate)}</strong>
+            <span style={{fontSize:12, color:"var(--ink-muted)"}}>
+              ({Math.max(0, Math.ceil((new Date(treatmentEndDate) - new Date(today())) / (1000*60*60*24)))}일 남음)
+            </span>
+          </div>
+        )}
 
         {showForm && (
           <div style={{background:"var(--surface2)", borderRadius:8, padding:16, marginBottom:16}}>
             <div className="form-group" style={{marginBottom:12}}>
-              <label className="form-label">내방일</label>
+              <label className="form-label">치료일</label>
               <input className="form-input" type="date" value={form.visited_at} style={{maxWidth:200}} onChange={e => setForm({...form, visited_at: e.target.value})} />
             </div>
             <div className="form-group" style={{marginBottom:12}}>
@@ -1939,11 +2004,11 @@ function VisitTab({ patient, currentUser }) {
           </div>
         )}
 
-        {visits.length === 0 ? <div className="empty">내방 기록이 없습니다</div> : (
+        {visits.length === 0 ? <div className="empty">치료 기록이 없습니다</div> : (
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>내방일</th><th>치료</th><th>메모</th><th></th></tr>
+                <tr><th>치료일</th><th>치료</th><th>메모</th><th></th></tr>
               </thead>
               <tbody>
                 {visits.map(v => (
@@ -1952,7 +2017,7 @@ function VisitTab({ patient, currentUser }) {
                     <td>{(v.treatment_types || []).map(t => <span key={t} className="treatment-tag">{treatmentLabel(t)}</span>)}</td>
                     <td style={{maxWidth:200, color:"var(--ink-muted)", fontSize:12}}>{v.memo || "-"}</td>
                     <td><button className="btn btn-xs btn-danger" onClick={async () => {
-                      if (!window.confirm("이 내방 기록을 삭제하시겠습니까?")) return;
+                      if (!window.confirm("이 치료 기록을 삭제하시겠습니까?")) return;
                       await supabase.from("visits").delete().eq("id", v.id);
                       load();
                     }}>삭제</button></td>
