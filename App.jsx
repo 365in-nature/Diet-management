@@ -837,11 +837,11 @@ function bodyFatAlert(bodyFatPercent, gender) {
   const pct = parseFloat(bodyFatPercent);
   if (gender === "female") {
     if (pct >= 35) return { msg: "고도비만 수준의 체지방률입니다.", color: "var(--warn)" };
-    if (pct >= 28) return { msg: "BMI가 정상이어도 체지방률 28% 이상은 마른 비만 가능성이 있습니다.", color: "var(--warn)" };
+    if (pct >= 28) return { msg: "BMI 정상이어도 체지방률 28% 이상은 마른 비만 가능성이 있습니다.", color: "var(--warn)" };
     if (pct < 18) return { msg: "체지방률이 너무 낮습니다. 건강에 주의가 필요합니다.", color: "var(--info)" };
   } else {
     if (pct >= 30) return { msg: "고도비만 수준의 체지방률입니다.", color: "var(--warn)" };
-    if (pct >= 25) return { msg: "BMI가 정상이어도 체지방률 25% 이상은 마른 비만 가능성이 있습니다.", color: "var(--warn)" };
+    if (pct >= 25) return { msg: "BMI 정상이어도 체지방률 25% 이상은 마른 비만 가능성이 있습니다.", color: "var(--warn)" };
     if (pct < 10) return { msg: "체지방률이 너무 낮습니다. 건강에 주의가 필요합니다.", color: "var(--info)" };
   }
   return null;
@@ -853,7 +853,10 @@ function InbodyTab({ patient, currentUser }) {
   const [parsing, setParsing] = useState(false);
   const [selected, setSelected] = useState(null);
   const [ageGroup, setAgeGroup] = useState("adult");
-  const printRef = useState(null);
+  // 파싱 후 확인/수정 상태
+  const [pendingData, setPendingData] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [pendingPdfUrl, setPendingPdfUrl] = useState(null);
 
   const load = useCallback(async () => {
     const { data } = await supabase.from("inbody_records").select("*").eq("patient_id", patient.id).order("measured_at", { ascending: true });
@@ -884,22 +887,49 @@ function InbodyTab({ patient, currentUser }) {
         });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || "파싱 실패");
-        const parsed = result.parsed;
-        await supabase.from("inbody_records").insert([{
-          patient_id: patient.id,
-          measured_at: parsed.measured_date || today(),
-          parsed_data: parsed,
-          pdf_url: urlData.publicUrl,
-        }]);
-        load();
+        // 파싱 결과를 바로 저장하지 않고 확인 폼으로 표시
+        setPendingData(result.parsed);
+        setEditForm(result.parsed);
+        setPendingPdfUrl(urlData.publicUrl);
       } catch(err) {
-        alert("파싱 실패: " + err.message);
+        alert("파싱 실패: " + err.message + "\n수동으로 값을 입력해주세요.");
+        // 실패해도 수동 입력 폼 열기
+        const emptyForm = { measured_date: today(), height: "", weight: "", body_fat_percent: "", muscle_mass: "", bmi: "", bmr: "", body_fat_mass: "", total_body_water: "" };
+        setPendingData(emptyForm);
+        setEditForm(emptyForm);
+        setPendingPdfUrl(urlData.publicUrl);
       }
       setParsing(false);
       setUploading(false);
     };
     reader.readAsDataURL(file);
     e.target.value = "";
+  };
+
+  const saveInbody = async () => {
+    if (!editForm) return;
+    // inbody_records 저장
+    await supabase.from("inbody_records").insert([{
+      patient_id: patient.id,
+      measured_at: editForm.measured_date || today(),
+      parsed_data: editForm,
+      pdf_url: pendingPdfUrl,
+    }]);
+    // 체형 측정 자동 저장 (체중, 키, BMI)
+    if (editForm.weight) {
+      await supabase.from("measurements").insert([{
+        patient_id: patient.id,
+        measured_at: editForm.measured_date || today(),
+        height: editForm.height || null,
+        weight: editForm.weight || null,
+        bmi: editForm.bmi || null,
+        memo: "인바디 자동 입력",
+      }]);
+    }
+    setPendingData(null);
+    setEditForm(null);
+    setPendingPdfUrl(null);
+    load();
   };
 
   const handlePrint = () => {
@@ -909,14 +939,14 @@ function InbodyTab({ patient, currentUser }) {
     w.document.write(`
       <html><head><title>인바디 분석 결과 - ${patient.name}</title>
       <style>
-        body { font-family: 'Noto Sans KR', sans-serif; padding: 24px; color: #1a1a2e; }
+        body { font-family: sans-serif; padding: 24px; color: #1a1a2e; }
         h2 { font-size: 20px; margin-bottom: 4px; }
         .sub { font-size: 13px; color: #9090b0; margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 24px; }
         th { background: #f4f3ef; padding: 8px 12px; text-align: left; font-size: 11px; color: #4a4a6a; border-bottom: 2px solid #e8e6e0; }
         td { padding: 10px 12px; border-bottom: 1px solid #e8e6e0; }
         .warn { color: #e07a5f; font-weight: 600; }
-        .section { font-size: 14px; font-weight: 700; margin: 16px 0 8px; }
+        .section { font-size: 14px; font-weight: 700; margin: 16px 0 8px; border-bottom: 1px solid #e8e6e0; padding-bottom: 4px; }
         @media print { body { padding: 0; } }
       </style></head><body>
       ${printContent.innerHTML}
@@ -926,14 +956,14 @@ function InbodyTab({ patient, currentUser }) {
     w.print();
   };
 
-  // 비교용 항목: 골격근량, 체지방량, 체지방률
   const compareFields = [
-    { key: "muscle_mass", label: "골격근량", unit: "kg" },
-    { key: "body_fat_mass", label: "체지방량", unit: "kg" },
-    { key: "body_fat_percent", label: "체지방률", unit: "%" },
+    { key: "muscle_mass", label: "골격근량", unit: "kg", color: "var(--accent)" },
+    { key: "body_fat_mass", label: "체지방량", unit: "kg", color: "var(--gold)" },
+    { key: "body_fat_percent", label: "체지방률", unit: "%", color: "var(--warn)" },
   ];
 
   const allFields = [
+    { key: "height", label: "신장", unit: "cm" },
     { key: "weight", label: "체중", unit: "kg" },
     { key: "body_fat_percent", label: "체지방률", unit: "%" },
     { key: "muscle_mass", label: "골격근량", unit: "kg" },
@@ -968,11 +998,61 @@ function InbodyTab({ patient, currentUser }) {
             <span className="btn btn-primary">
               {uploading ? (parsing ? "🤖 AI 분석 중..." : "업로드 중...") : "+ PDF 업로드"}
             </span>
-            <input type="file" accept=".pdf" style={{display:"none"}} onChange={handleFileUpload} disabled={uploading} />
+            <input type="file" accept=".pdf" style={{display:"none"}} onChange={handleFileUpload} disabled={uploading || !!pendingData} />
           </label>
         </div>
-        <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:8}}>성인용/아동용을 먼저 선택 후 PDF를 업로드하세요</div>
+        <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:8}}>성인용/아동용 선택 후 PDF 업로드 → AI 파싱 결과 확인 후 저장</div>
       </div>
+
+      {/* 파싱 결과 확인/수정 폼 */}
+      {pendingData && editForm && (
+        <div className="card" style={{marginBottom:16, border:"2px solid var(--accent)"}}>
+          <div className="section-title" style={{marginBottom:12, color:"var(--accent)"}}>✏️ 파싱 결과 확인 및 수정 후 저장</div>
+          <div style={{fontSize:12, color:"var(--ink-muted)", marginBottom:12}}>AI가 읽은 값을 확인하고 오류가 있으면 직접 수정 후 저장해주세요. 체형 측정에도 자동으로 저장됩니다.</div>
+          <div className="form-grid">
+            <div className="form-group">
+              <label className="form-label">측정일</label>
+              <input className="form-input" type="date" value={editForm.measured_date || ""} onChange={e => setEditForm({...editForm, measured_date: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">신장 (cm)</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.height || ""} onChange={e => setEditForm({...editForm, height: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">체중 (kg)</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.weight || ""} onChange={e => setEditForm({...editForm, weight: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">체지방률 (%)</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.body_fat_percent || ""} onChange={e => setEditForm({...editForm, body_fat_percent: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">골격근량 (kg)</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.muscle_mass || ""} onChange={e => setEditForm({...editForm, muscle_mass: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">체지방량 (kg)</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.body_fat_mass || ""} onChange={e => setEditForm({...editForm, body_fat_mass: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">BMI</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.bmi || ""} onChange={e => setEditForm({...editForm, bmi: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">기초대사량 (kcal)</label>
+              <input className="form-input" type="number" value={editForm.bmr || ""} onChange={e => setEditForm({...editForm, bmr: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">체수분 (L)</label>
+              <input className="form-input" type="number" step="0.1" value={editForm.total_body_water || ""} onChange={e => setEditForm({...editForm, total_body_water: e.target.value})} />
+            </div>
+          </div>
+          <div className="form-actions">
+            <button className="btn btn-secondary" onClick={() => { setPendingData(null); setEditForm(null); setPendingPdfUrl(null); }}>취소</button>
+            <button className="btn btn-primary" onClick={saveInbody}>저장 (체형 측정 자동 반영)</button>
+          </div>
+        </div>
+      )}
 
       {/* 변화 추이 차트 */}
       {chartData.length >= 2 && (
@@ -981,7 +1061,7 @@ function InbodyTab({ patient, currentUser }) {
           {compareFields.map(f => chartData.some(d => d[f.key]) && (
             <div key={f.key} style={{marginBottom:16}}>
               <div className="form-label" style={{marginBottom:8}}>{f.label} ({f.unit})</div>
-              <LineChart data={chartData} valueKey={f.key} color={f.key === "muscle_mass" ? "var(--accent)" : f.key === "body_fat_mass" ? "var(--gold)" : "var(--warn)"} />
+              <LineChart data={chartData} valueKey={f.key} color={f.color} />
             </div>
           ))}
         </div>
@@ -1005,10 +1085,9 @@ function InbodyTab({ patient, currentUser }) {
               ))}
             </div>
 
-            {/* 인쇄 영역 */}
             <div id="inbody-print-area">
               <h2 style={{fontFamily:"serif", marginBottom:4}}>인바디 분석 결과</h2>
-              <div className="sub">{patient.name} · 차트 #{patient.chart_number}</div>
+              <div className="sub">{patient.name} · 차트 #{patient.chart_number} · 출력일: {formatDate(today())}</div>
 
               {/* 전체 비교 테이블 */}
               <div className="section">전체 측정 이력 비교</div>
@@ -1027,12 +1106,12 @@ function InbodyTab({ patient, currentUser }) {
                         {records.map((r, i) => {
                           const val = r.parsed_data?.[f.key];
                           const prev = records[i-1]?.parsed_data?.[f.key];
-                          const diff = val && prev ? (val - prev).toFixed(1) : null;
+                          const diff = val && prev ? (parseFloat(val) - parseFloat(prev)).toFixed(1) : null;
                           const isBad = f.key === "body_fat_percent" && bodyFatAlert(val, patient.gender);
                           return (
                             <td key={r.id} style={{color: isBad ? "var(--warn)" : "inherit"}}>
                               {val != null ? `${val} ${f.unit}` : "-"}
-                              {diff && <span style={{fontSize:11, marginLeft:4, color: parseFloat(diff) < 0 ? "var(--accent)" : "var(--warn)"}}>({diff > 0 ? "+" : ""}{diff})</span>}
+                              {diff && <span style={{fontSize:11, marginLeft:4, color: parseFloat(diff) < 0 ? "var(--accent)" : "var(--warn)"}}>({parseFloat(diff) > 0 ? "+" : ""}{diff})</span>}
                             </td>
                           );
                         })}
@@ -1048,12 +1127,12 @@ function InbodyTab({ patient, currentUser }) {
                   <div className="section">{formatDate(selected.measured_at)} 상세 결과</div>
                   {allFields.map(f => {
                     const val = selected.parsed_data?.[f.key];
-                    if (val == null) return null;
+                    if (val == null || val === "") return null;
                     const alert = f.key === "body_fat_percent" ? bodyFatAlert(val, patient.gender) : null;
                     return (
                       <div key={f.key} className="inbody-item">
                         <span className="inbody-label">{f.label}</span>
-                        <div style={{display:"flex", alignItems:"center", gap:8}}>
+                        <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
                           <span className="inbody-value" style={{color: alert ? alert.color : "inherit"}}>{val} {f.unit}</span>
                           {alert && <span style={{fontSize:11, color:alert.color, fontWeight:600}}>⚠️ {alert.msg}</span>}
                         </div>
@@ -1259,14 +1338,13 @@ function PrescriptionTab({ patient, currentUser }) {
           {reservationHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {reservationHC.memo}</div>}
 
           {/* 잔여 일수 업데이트 */}
-          {!reservationHC?.is_done && (
-            <div className="remaining-input-row">
-              <span style={{fontSize:12}}>잔여 한약 일수:</span>
-              <input type="number" min="1" placeholder="5" value={remainingInput[rx.id] || ""} onChange={e => setRemainingInput({...remainingInput, [rx.id]: e.target.value})} />
-              <span style={{fontSize:12}}>일</span>
-              <button className="btn btn-sm btn-secondary" onClick={() => saveRemainingUpdate(rx.id)}>날짜 재산출</button>
-            </div>
-          )}
+          {/* 잔여 일수 업데이트 - 항상 표시 */}
+          <div className="remaining-input-row">
+            <span style={{fontSize:12}}>잔여 한약 일수:</span>
+            <input type="number" min="1" placeholder="5" value={remainingInput[rx.id] || ""} onChange={e => setRemainingInput({...remainingInput, [rx.id]: e.target.value})} />
+            <span style={{fontSize:12}}>일</span>
+            <button className="btn btn-sm btn-secondary" onClick={() => saveRemainingUpdate(rx.id)}>날짜 재산출</button>
+          </div>
 
           {latestUpdate && (
             <div style={{fontSize:11, color:"var(--ink-muted)", marginTop:4}}>
