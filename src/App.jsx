@@ -4,8 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // =============================================
 // CONFIGURATION - Supabase 연결 정보 입력 필요
 // =============================================
-const SUPABASE_URL = "https://agjwbhsrjhdhegtkoffy.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFnandiaHNyamhkaGVndGtvZmZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4MDg5NzAsImV4cCI6MjA5MjM4NDk3MH0._wEMNazSLVebZblCLXLw1yEc8Exr0nYu3y4Rj7WMmc8";
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // =============================================
@@ -385,13 +385,11 @@ function PatientListPage({ onSelectPatient, currentUser }) {
       const latestUpdate = p.prescription_updates?.sort((a,b) => b.updated_at.localeCompare(a.updated_at))[0];
       const reservationDate = latestUpdate ? latestUpdate.new_reservation_happycall_date : p.reservation_happycall_date;
       const arrivalDate = p.arrival_happycall_date;
+      const type = p.medicine_type; // 'tang' or 'hwan'
 
-      const hasAlert = isTodayOrPast(arrivalDate) || isTodayOrPast(reservationDate);
-      if (hasAlert) {
-        alertMap[p.patient_id] = (alertMap[p.patient_id] || []);
-        if (isTodayOrPast(arrivalDate)) alertMap[p.patient_id].push("도착");
-        if (isTodayOrPast(reservationDate)) alertMap[p.patient_id].push("예약");
-      }
+      if (!alertMap[p.patient_id]) alertMap[p.patient_id] = [];
+      if (isTodayOrPast(arrivalDate)) alertMap[p.patient_id].push({ kind: "도착", type });
+      if (isTodayOrPast(reservationDate)) alertMap[p.patient_id].push({ kind: "예약", type });
     });
     setAlerts(alertMap);
     setLoading(false);
@@ -434,11 +432,21 @@ function PatientListPage({ onSelectPatient, currentUser }) {
                     <div className="patient-chart">차트 #{p.chart_number}</div>
                   </div>
                   <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
-                    {todayAlerts.map(a => (
-                      <span key={a} className={`badge ${a === "도착" ? "badge-info" : "badge-warn"}`}>
-                        {a === "도착" ? "📦" : "📅"} {a} 해피콜
+                    {todayAlerts.map((a, i) => (
+                      <span key={i} className={`badge ${
+                        a.type === "tang"
+                          ? (a.kind === "도착" ? "badge-gold" : "badge-warn")
+                          : (a.kind === "도착" ? "badge-info" : "badge-success")
+                      }`}>
+                        {a.kind === "도착" ? "📦" : "📅"} {a.type === "tang" ? "탕약" : "환약"} {a.kind} 해피콜
                       </span>
                     ))}
+                    <button className="btn btn-xs btn-danger" onClick={async e => {
+                      e.stopPropagation();
+                      if (!window.confirm(`${p.name} 환자를 삭제하시겠습니까?\n모든 데이터(처방, 측정값 등)가 함께 삭제됩니다.`)) return;
+                      await supabase.from("patients").delete().eq("id", p.id);
+                      loadPatients();
+                    }}>삭제</button>
                   </div>
                 </div>
 
@@ -568,12 +576,27 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
 // =============================================
 // TAB 1: MEASUREMENT
 // =============================================
+function calcBMI(weight, height) {
+  if (!weight || !height) return null;
+  const h = height / 100;
+  return (weight / (h * h)).toFixed(1);
+}
+
+function bmiCategory(bmi) {
+  if (!bmi) return null;
+  const b = parseFloat(bmi);
+  if (b < 18.5) return { label: "저체중", color: "var(--info)" };
+  if (b < 23)   return { label: "정상", color: "var(--accent)" };
+  if (b < 25)   return { label: "과체중", color: "var(--gold)" };
+  return { label: "비만", color: "var(--warn)" };
+}
+
 function MeasurementTab({ patient, currentUser }) {
   const [measurements, setMeasurements] = useState([]);
   const [goal, setGoal] = useState(null);
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [showMeasureForm, setShowMeasureForm] = useState(false);
-  const [mForm, setMForm] = useState({ measured_at: today(), weight: "", body_fat_percent: "" });
+  const [mForm, setMForm] = useState({ measured_at: today(), height: "", weight: "", memo: "" });
   const [gForm, setGForm] = useState({ target_weight: "", target_period_weeks: "", start_date: today() });
 
   const load = useCallback(async () => {
@@ -586,9 +609,18 @@ function MeasurementTab({ patient, currentUser }) {
   useEffect(() => { load(); }, [load]);
 
   const saveMeasurement = async () => {
-    if (!mForm.weight && !mForm.body_fat_percent) return;
-    await supabase.from("measurements").insert([{ ...mForm, patient_id: patient.id, created_by: currentUser.id }]);
-    setMForm({ measured_at: today(), weight: "", body_fat_percent: "" });
+    if (!mForm.weight) { alert("체중은 필수 입력항목입니다."); return; }
+    const bmi = calcBMI(mForm.weight, mForm.height);
+    const { error } = await supabase.from("measurements").insert([{
+      patient_id: patient.id,
+      measured_at: mForm.measured_at,
+      height: mForm.height || null,
+      weight: mForm.weight,
+      bmi: bmi || null,
+      memo: mForm.memo || null,
+    }]);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    setMForm({ measured_at: today(), height: "", weight: "", memo: "" });
     setShowMeasureForm(false);
     load();
   };
@@ -607,10 +639,11 @@ function MeasurementTab({ patient, currentUser }) {
   const latestWeight = measurements[measurements.length-1]?.weight;
   const startWeight = measurements[0]?.weight;
   const lost = startWeight && latestWeight ? (startWeight - latestWeight).toFixed(1) : null;
+  const previewBMI = calcBMI(mForm.weight, mForm.height);
+  const previewCat = bmiCategory(previewBMI);
 
   return (
     <div>
-      {/* 목표 카드 */}
       <div className="card" style={{marginBottom: 16}}>
         <div className="section-header">
           <div className="section-title">🎯 목표 설정</div>
@@ -626,7 +659,6 @@ function MeasurementTab({ patient, currentUser }) {
             {lost && <div><div className="form-label">현재까지 감량</div><div style={{fontSize:20,fontWeight:700,color:"var(--info)"}}>-{lost} kg</div></div>}
           </div>
         ) : <div className="empty" style={{padding:16}}>목표를 등록해주세요</div>}
-
         {showGoalForm && (
           <div style={{marginTop:16, paddingTop:16, borderTop:"1px solid var(--border)"}}>
             <div className="form-grid">
@@ -651,28 +683,44 @@ function MeasurementTab({ patient, currentUser }) {
         )}
       </div>
 
-      {/* 측정값 */}
       <div className="card">
         <div className="section-header">
           <div className="section-title">📊 체형 측정 기록</div>
           <button className="btn btn-primary btn-sm" onClick={() => setShowMeasureForm(!showMeasureForm)}>+ 측정값 입력</button>
         </div>
-
         {showMeasureForm && (
           <div style={{background:"var(--surface2)", borderRadius:8, padding:16, marginBottom:16}}>
-            <div className="form-grid-3">
+            <div className="form-grid">
               <div className="form-group">
                 <label className="form-label">측정일</label>
                 <input className="form-input" type="date" value={mForm.measured_at} onChange={e => setMForm({...mForm, measured_at: e.target.value})} />
               </div>
               <div className="form-group">
-                <label className="form-label">체중 (kg)</label>
-                <input className="form-input" type="number" step="0.1" placeholder="0.0" value={mForm.weight} onChange={e => setMForm({...mForm, weight: e.target.value})} />
+                <label className="form-label">키 (cm)</label>
+                <input className="form-input" type="number" step="0.1" placeholder="000.0" value={mForm.height} onChange={e => setMForm({...mForm, height: e.target.value})} />
               </div>
               <div className="form-group">
-                <label className="form-label">체지방률 (%)</label>
-                <input className="form-input" type="number" step="0.1" placeholder="0.0" value={mForm.body_fat_percent} onChange={e => setMForm({...mForm, body_fat_percent: e.target.value})} />
+                <label className="form-label">체중 (kg) *</label>
+                <input className="form-input" type="number" step="0.1" placeholder="00.0" value={mForm.weight} onChange={e => setMForm({...mForm, weight: e.target.value})} />
               </div>
+              <div className="form-group" style={{display:"flex", flexDirection:"column", justifyContent:"flex-end"}}>
+                {previewBMI && previewCat ? (
+                  <div style={{background:"var(--surface)", borderRadius:8, padding:"10px 14px", border:"1.5px solid var(--border)"}}>
+                    <div style={{fontSize:11, color:"var(--ink-muted)", marginBottom:2}}>BMI 자동 계산</div>
+                    <div style={{display:"flex", alignItems:"center", gap:8}}>
+                      <span style={{fontSize:20, fontWeight:700}}>{previewBMI}</span>
+                      <span style={{fontSize:12, fontWeight:700, color:previewCat.color, background:previewCat.color+"20", padding:"2px 8px", borderRadius:20}}>{previewCat.label}</span>
+                    </div>
+                  </div>
+                ) : <div style={{fontSize:11, color:"var(--ink-muted)"}}>키와 체중을 입력하면<br/>BMI가 자동 계산됩니다</div>}
+              </div>
+              <div className="form-group form-full">
+                <label className="form-label">메모 / 특이사항</label>
+                <textarea className="form-input" rows={2} style={{resize:"vertical"}} placeholder="특이사항을 입력하세요" value={mForm.memo} onChange={e => setMForm({...mForm, memo: e.target.value})} />
+              </div>
+            </div>
+            <div style={{fontSize:11, color:"var(--ink-muted)", marginTop:4}}>
+              아시아인 기준 — 저체중: BMI &lt;18.5 / 정상: 18.5~22.9 / 과체중: 23~24.9 / 비만: ≥25
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary btn-sm" onClick={() => setShowMeasureForm(false)}>취소</button>
@@ -680,39 +728,45 @@ function MeasurementTab({ patient, currentUser }) {
             </div>
           </div>
         )}
-
         {measurements.length >= 2 && (
           <div style={{marginBottom:16}}>
             <div className="form-label" style={{marginBottom:8}}>체중 추이 (kg)</div>
             <LineChart data={measurements} valueKey="weight" color="var(--accent)" />
-            {measurements.some(m => m.body_fat_percent) && (
+            {measurements.some(m => m.bmi) && (
               <>
-                <div className="form-label" style={{margin:"16px 0 8px"}}>체지방률 추이 (%)</div>
-                <LineChart data={measurements} valueKey="body_fat_percent" color="var(--info)" />
+                <div className="form-label" style={{margin:"16px 0 8px"}}>BMI 추이</div>
+                <LineChart data={measurements} valueKey="bmi" color="var(--gold)" />
               </>
             )}
           </div>
         )}
-
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>측정일</th><th>체중 (kg)</th><th>체지방률 (%)</th><th>변화</th></tr>
+              <tr><th>측정일</th><th>키(cm)</th><th>체중(kg)</th><th>BMI</th><th>변화</th><th>메모</th><th></th></tr>
             </thead>
             <tbody>
               {[...measurements].reverse().map((m, i, arr) => {
                 const prev = arr[i+1];
                 const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
+                const cat = bmiCategory(m.bmi);
                 return (
                   <tr key={m.id}>
                     <td>{formatDate(m.measured_at)}</td>
+                    <td>{m.height || "-"}</td>
                     <td><strong>{m.weight || "-"}</strong></td>
-                    <td>{m.body_fat_percent || "-"}</td>
+                    <td>{m.bmi ? (<span style={{display:"inline-flex",alignItems:"center",gap:4}}>{m.bmi}{cat && <span style={{fontSize:10,fontWeight:700,color:cat.color,background:cat.color+"20",padding:"1px 6px",borderRadius:20}}>{cat.label}</span>}</span>) : "-"}</td>
                     <td>{diff ? <span style={{color: diff < 0 ? "var(--accent)" : "var(--warn)", fontWeight:600}}>{diff > 0 ? "+" : ""}{diff}</span> : "-"}</td>
+                    <td style={{maxWidth:150, fontSize:12, color:"var(--ink-muted)"}}>{m.memo || "-"}</td>
+                    <td><button className="btn btn-xs btn-danger" onClick={async () => {
+                      if (!window.confirm("이 측정 기록을 삭제하시겠습니까?")) return;
+                      await supabase.from("measurements").delete().eq("id", m.id);
+                      load();
+                    }}>삭제</button></td>
                   </tr>
                 );
               })}
-              {measurements.length === 0 && <tr><td colSpan={4} className="empty">측정 기록이 없습니다</td></tr>}
+              {measurements.length === 0 && <tr><td colSpan={7} className="empty">측정 기록이 없습니다</td></tr>}
             </tbody>
           </table>
         </div>
@@ -915,13 +969,13 @@ function PrescriptionTab({ patient, currentUser }) {
 
   const savePkg = async () => {
     if (pkg) await supabase.from("packages").update({ is_active: false }).eq("id", pkg.id);
-    await supabase.from("packages").insert([{
+    const { error } = await supabase.from("packages").insert([{
       patient_id: patient.id,
       package_months: Number(pkgForm.package_months),
       start_date: pkgForm.start_date,
       remaining_months: Number(pkgForm.package_months),
-      created_by: currentUser.id
     }]);
+    if (error) { alert("저장 실패: " + error.message); return; }
     setShowPkgForm(false);
     load();
   };
@@ -940,7 +994,6 @@ function PrescriptionTab({ patient, currentUser }) {
       expected_end_date: expectedEnd,
       arrival_happycall_date: arrivalHappy,
       reservation_happycall_date: reservationHappy,
-      created_by: currentUser.id
     }]);
     setShowRxForm(false);
     load();
@@ -966,7 +1019,6 @@ function PrescriptionTab({ patient, currentUser }) {
       remaining_days: days,
       new_expected_end_date: newEnd,
       new_reservation_happycall_date: newHappy,
-      created_by: currentUser.id
     }]);
     setRemainingInput({...remainingInput, [rxId]: ""});
     load();
@@ -982,7 +1034,6 @@ function PrescriptionTab({ patient, currentUser }) {
         call_type: callType,
         is_done: true,
         memo: memo || null,
-        called_by: currentUser.id
       }]);
     }
     load();
@@ -1161,7 +1212,14 @@ function PrescriptionTab({ patient, currentUser }) {
                   <strong>{formatDate(rx.prescribed_at)}</strong> 처방
                   <span style={{color:"var(--ink-muted)", fontSize:13, marginLeft:8}}>({rx.duration_days}일분)</span>
                 </div>
-                <button className="btn btn-sm btn-danger" onClick={() => completeRx(rx)}>복용 완료</button>
+                <div style={{display:"flex", gap:8}}>
+                  <button className="btn btn-sm btn-danger" onClick={() => completeRx(rx)}>복용 완료</button>
+                  <button className="btn btn-sm btn-secondary" onClick={async () => {
+                    if (!window.confirm("이 처방 기록을 삭제하시겠습니까?")) return;
+                    await supabase.from("prescriptions").delete().eq("id", rx.id);
+                    load();
+                  }}>삭제</button>
+                </div>
               </div>
               {renderHappycallSection(rx)}
             </div>
@@ -1176,7 +1234,7 @@ function PrescriptionTab({ patient, currentUser }) {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>처방일</th><th>종류</th><th>기간</th><th>완료일</th></tr>
+                <tr><th>처방일</th><th>종류</th><th>기간</th><th>완료일</th><th></th></tr>
               </thead>
               <tbody>
                 {completedPrescriptions.map(rx => (
@@ -1185,6 +1243,11 @@ function PrescriptionTab({ patient, currentUser }) {
                     <td><span className={`badge badge-sm ${rx.medicine_type === "hwan" ? "badge-success" : "badge-gold"}`}>{rx.medicine_type === "hwan" ? "환약" : "탕약"}</span></td>
                     <td>{rx.duration_days}일</td>
                     <td>{formatDate(rx.completed_at)}</td>
+                    <td><button className="btn btn-xs btn-danger" onClick={async () => {
+                      if (!window.confirm("이 처방 기록을 삭제하시겠습니까?")) return;
+                      await supabase.from("prescriptions").delete().eq("id", rx.id);
+                      load();
+                    }}>삭제</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -1207,11 +1270,11 @@ function VisitTab({ patient, currentUser }) {
   const [form, setForm] = useState({ visited_at: today(), treatment_types: [], memo: "" });
 
   const TREATMENTS = [
-    { key: "acupuncture", label: "침" },
-    { key: "moxibustion", label: "뜸" },
-    { key: "chuna", label: "추나" },
-    { key: "cupping", label: "부항" },
-    { key: "herbal_bath", label: "약탕" },
+    { key: "general", label: "일반 관리" },
+    { key: "premium", label: "프리미엄 관리" },
+    { key: "herbal_injection", label: "약침" },
+    { key: "highfrequency", label: "고주파" },
+    { key: "coolsculpting", label: "쿨쎄라" },
     { key: "other", label: "기타" },
   ];
 
@@ -1232,7 +1295,7 @@ function VisitTab({ patient, currentUser }) {
   };
 
   const saveVisit = async () => {
-    await supabase.from("visits").insert([{ ...form, patient_id: patient.id, created_by: currentUser.id }]);
+    await supabase.from("visits").insert([{ ...form, patient_id: patient.id }]);
     setForm({ visited_at: today(), treatment_types: [], memo: "" });
     setShowForm(false);
     load();
@@ -1280,7 +1343,7 @@ function VisitTab({ patient, currentUser }) {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>내방일</th><th>치료</th><th>메모</th></tr>
+                <tr><th>내방일</th><th>치료</th><th>메모</th><th></th></tr>
               </thead>
               <tbody>
                 {visits.map(v => (
@@ -1288,6 +1351,11 @@ function VisitTab({ patient, currentUser }) {
                     <td><strong>{formatDate(v.visited_at)}</strong></td>
                     <td>{(v.treatment_types || []).map(t => <span key={t} className="treatment-tag">{treatmentLabel(t)}</span>)}</td>
                     <td style={{maxWidth:200, color:"var(--ink-muted)", fontSize:12}}>{v.memo || "-"}</td>
+                    <td><button className="btn btn-xs btn-danger" onClick={async () => {
+                      if (!window.confirm("이 내방 기록을 삭제하시겠습니까?")) return;
+                      await supabase.from("visits").delete().eq("id", v.id);
+                      load();
+                    }}>삭제</button></td>
                   </tr>
                 ))}
               </tbody>
