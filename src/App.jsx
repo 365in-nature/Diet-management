@@ -4,8 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // =============================================
 // CONFIGURATION - Supabase 연결 정보 입력 필요
 // =============================================
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // =============================================
@@ -896,7 +896,7 @@ function PrescriptionTab({ patient, currentUser }) {
   const load = useCallback(async () => {
     const { data: pkgs } = await supabase.from("packages").select("*").eq("patient_id", patient.id).eq("is_active", true).order("created_at", { ascending: false }).limit(1);
     const { data: rxs } = await supabase.from("prescriptions").select("*").eq("patient_id", patient.id).order("prescribed_at", { ascending: false });
-    const { data: hcs } = await supabase.from("happycall_logs").select("*, users(name)").in("prescription_id", (rxs||[]).map(r => r.id));
+    const { data: hcs } = await supabase.from("happycall_logs").select("*").in("prescription_id", (rxs||[]).map(r => r.id));
     const { data: upds } = await supabase.from("prescription_updates").select("*").in("prescription_id", (rxs||[]).map(r => r.id)).order("updated_at", { ascending: false });
 
     setPkg(pkgs?.[0] || null);
@@ -1036,7 +1036,7 @@ function PrescriptionTab({ patient, currentUser }) {
               </button>
             </div>
           </div>
-          {arrivalHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {arrivalHC.memo} — {arrivalHC.users?.name}</div>}
+          {arrivalHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {arrivalHC.memo}</div>}
         </div>
 
         {/* 예약 해피콜 */}
@@ -1052,7 +1052,7 @@ function PrescriptionTab({ patient, currentUser }) {
               </button>
             </div>
           </div>
-          {reservationHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {reservationHC.memo} — {reservationHC.users?.name}</div>}
+          {reservationHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {reservationHC.memo}</div>}
 
           {/* 잔여 일수 업데이트 */}
           {!reservationHC?.is_done && (
@@ -1216,7 +1216,7 @@ function VisitTab({ patient, currentUser }) {
   ];
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("visits").select("*, users(name)").eq("patient_id", patient.id).order("visited_at", { ascending: false });
+    const { data } = await supabase.from("visits").select("*").eq("patient_id", patient.id).order("visited_at", { ascending: false });
     setVisits(data || []);
   }, [patient.id]);
 
@@ -1280,7 +1280,7 @@ function VisitTab({ patient, currentUser }) {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>내방일</th><th>치료</th><th>메모</th><th>담당</th></tr>
+                <tr><th>내방일</th><th>치료</th><th>메모</th></tr>
               </thead>
               <tbody>
                 {visits.map(v => (
@@ -1288,7 +1288,6 @@ function VisitTab({ patient, currentUser }) {
                     <td><strong>{formatDate(v.visited_at)}</strong></td>
                     <td>{(v.treatment_types || []).map(t => <span key={t} className="treatment-tag">{treatmentLabel(t)}</span>)}</td>
                     <td style={{maxWidth:200, color:"var(--ink-muted)", fontSize:12}}>{v.memo || "-"}</td>
-                    <td style={{fontSize:12}}>{v.users?.name || "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1401,7 +1400,6 @@ function AdminPage({ currentUser }) {
 // =============================================
 export default function App() {
   const [session, setSession] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState("patients");
   const [selectedPatient, setSelectedPatient] = useState(null);
@@ -1409,28 +1407,23 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) loadUser(session.user.id);
-      else setLoading(false);
+      setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) loadUser(session.user.id);
-      else { setCurrentUser(null); setLoading(false); }
+      setLoading(false);
     });
     return () => subscription.unsubscribe();
   }, []);
-
-  const loadUser = async (uid) => {
-    const { data } = await supabase.from("users").select("*").eq("id", uid).single();
-    setCurrentUser(data);
-    setLoading(false);
-  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setSelectedPatient(null);
     setPage("patients");
   };
+
+  // session.user를 currentUser로 사용 (id, email 포함)
+  const currentUser = session?.user ? { id: session.user.id, email: session.user.email } : null;
 
   if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontFamily:"Noto Sans KR, sans-serif"}}>로딩 중...</div>;
 
@@ -1451,16 +1444,10 @@ export default function App() {
                 <div className={`nav-item ${page === "patients" ? "active" : ""}`} onClick={() => { setPage("patients"); setSelectedPatient(null); }}>
                   👥 환자 목록
                 </div>
-                {currentUser?.role === "admin" && (
-                  <div className={`nav-item ${page === "admin" ? "active" : ""}`} onClick={() => { setPage("admin"); setSelectedPatient(null); }}>
-                    ⚙️ 계정 관리
-                  </div>
-                )}
               </nav>
               <div className="sidebar-bottom">
                 <div className="sidebar-user">
-                  <strong>{currentUser?.name || "사용자"}</strong>
-                  {currentUser?.role === "admin" ? "관리자" : "스태프"}
+                  <strong>{currentUser?.email || "사용자"}</strong>
                 </div>
                 <button className="btn-logout" onClick={handleLogout}>로그아웃</button>
               </div>
@@ -1473,7 +1460,6 @@ export default function App() {
               {page === "patients" && selectedPatient && (
                 <PatientDetailPage patient={selectedPatient} onBack={() => setSelectedPatient(null)} currentUser={currentUser} />
               )}
-              {page === "admin" && <AdminPage currentUser={currentUser} />}
             </main>
           </div>
         )}
@@ -1481,4 +1467,3 @@ export default function App() {
     </>
   );
 }
-
