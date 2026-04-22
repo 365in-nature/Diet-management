@@ -44,6 +44,7 @@ export default async function handler(req, res) {
 
 추출 항목:
 - 측정일시: 결과지 상단의 날짜 (YYYY-MM-DD 형식으로 변환)
+- 신장: "신장" 항목의 숫자 (cm)
 - 체중: "체중" 항목의 숫자 (kg)
 - 체지방률: "체지방률" 또는 "체지방율" 항목의 숫자 (%)
 - 골격근량: "골격근량" 항목의 숫자 (kg)
@@ -55,6 +56,7 @@ export default async function handler(req, res) {
 반드시 아래 JSON 형식으로만 응답하세요. 설명, 주석, 마크다운 없이 JSON만 출력하세요:
 {
   "measured_date": "YYYY-MM-DD",
+  "height": 숫자 또는 null,
   "weight": 숫자 또는 null,
   "body_fat_percent": 숫자 또는 null,
   "muscle_mass": 숫자 또는 null,
