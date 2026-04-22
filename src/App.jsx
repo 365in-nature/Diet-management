@@ -542,6 +542,392 @@ function NewPatientModal({ onClose }) {
 // =============================================
 function PatientDetailPage({ patient, onBack, currentUser }) {
   const [tab, setTab] = useState("measurement");
+  const [generating, setGenerating] = useState(false);
+
+  const generatePDF = async () => {
+    setGenerating(true);
+    try {
+      // 모든 데이터 불러오기
+      const [{ data: measurements }, { data: goals }, { data: inbodyRecords }] = await Promise.all([
+        supabase.from("measurements").select("*").eq("patient_id", patient.id).order("measured_at"),
+        supabase.from("goals").select("*").eq("patient_id", patient.id).order("created_at", { ascending: false }).limit(1),
+        supabase.from("inbody_records").select("*").eq("patient_id", patient.id).order("measured_at"),
+      ]);
+
+      const goal = goals?.[0];
+      const ms = measurements || [];
+      const ib = inbodyRecords || [];
+      const latestWeight = ms[ms.length-1]?.weight;
+      const startWeight = ms[0]?.weight;
+      const lost = startWeight && latestWeight ? (startWeight - latestWeight).toFixed(1) : null;
+
+      // SVG 그래프 생성 함수
+      const makeSVG = (data, valueKey, color, label, unit) => {
+        if (!data || data.length < 2) return `<div style="color:#9090b0;font-size:12px;padding:20px 0">데이터가 부족합니다 (최소 2개)</div>`;
+        const values = data.map(d => parseFloat(d[valueKey])).filter(v => !isNaN(v));
+        if (values.length < 2) return `<div style="color:#9090b0;font-size:12px;padding:20px 0">데이터가 부족합니다</div>`;
+        const min = Math.min(...values) - 1;
+        const max = Math.max(...values) + 1;
+        const w = 500, h = 140, padX = 50, padY = 20;
+        const pts = data.filter(d => !isNaN(parseFloat(d[valueKey]))).map((d, i, arr) => ({
+          x: padX + (i / (arr.length - 1)) * (w - padX * 2),
+          y: padY + ((max - parseFloat(d[valueKey])) / (max - min)) * (h - padY * 2),
+          val: parseFloat(d[valueKey]),
+          date: (d.measured_at || "").slice(5),
+        }));
+        const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+        const areaD = `${pathD} L ${pts[pts.length-1].x} ${h} L ${pts[0].x} ${h} Z`;
+        return `<svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%">
+          <defs><linearGradient id="g${valueKey}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+          </linearGradient></defs>
+          <path d="${areaD}" fill="url(#g${valueKey})"/>
+          <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          ${pts.map(p => `
+            <circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" stroke="white" stroke-width="2"/>
+            <text x="${p.x}" y="${h - 4}" text-anchor="middle" font-size="9" fill="#9090b0">${p.date}</text>
+            <text x="${p.x}" y="${p.y - 8}" text-anchor="middle" font-size="10" font-weight="600" fill="${color}">${p.val}</text>
+          `).join("")}
+        </svg>`;
+      };
+
+      // BMI 카테고리
+      const bmiCat = (bmi) => {
+        if (!bmi) return "";
+        const b = parseFloat(bmi);
+        if (b < 18.5) return "저체중";
+        if (b < 23) return "정상";
+        if (b < 25) return "과체중";
+        return "비만";
+      };
+
+      // 체지방률 경고
+      const fatWarn = (pct, gender) => {
+        if (!pct) return "";
+        const p = parseFloat(pct);
+        if (gender === "female") {
+          if (p >= 35) return "⚠️ 고도비만 수준";
+          if (p >= 28) return "⚠️ 마른 비만 가능성";
+        } else {
+          if (p >= 30) return "⚠️ 고도비만 수준";
+          if (p >= 25) return "⚠️ 마른 비만 가능성";
+        }
+        return "";
+      };
+
+      const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>건강관리 리포트 — ${patient.name}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Noto Sans KR', sans-serif; color: #1a1a2e; background: #fff; }
+
+  /* COVER */
+  .cover { background: #1a1a2e; color: #fff; padding: 60px 48px 48px; min-height: 180px; position: relative; overflow: hidden; }
+  .cover::before { content: ""; position: absolute; top: -40px; right: -40px; width: 200px; height: 200px; border-radius: 50%; background: rgba(45,106,79,0.3); }
+  .cover::after { content: ""; position: absolute; bottom: -60px; left: 40%; width: 280px; height: 280px; border-radius: 50%; background: rgba(82,183,136,0.1); }
+  .cover-clinic { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: #52b788; margin-bottom: 12px; }
+  .cover-title { font-size: 28px; font-weight: 300; margin-bottom: 6px; }
+  .cover-title strong { font-weight: 700; }
+  .cover-sub { font-size: 13px; color: rgba(255,255,255,0.5); margin-top: 20px; }
+  .cover-meta { display: flex; gap: 32px; margin-top: 8px; }
+  .cover-meta span { font-size: 12px; color: rgba(255,255,255,0.7); }
+  .cover-meta strong { color: #52b788; }
+
+  /* BODY */
+  .body { padding: 40px 48px; }
+
+  /* SECTION */
+  .section-block { margin-bottom: 40px; }
+  .section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #1a1a2e; }
+  .section-num { width: 28px; height: 28px; border-radius: 50%; background: #1a1a2e; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+  .section-title { font-size: 16px; font-weight: 700; }
+
+  /* GOAL BOX */
+  .goal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+  .goal-card { background: #f4f3ef; border-radius: 10px; padding: 16px; }
+  .goal-label { font-size: 10px; color: #9090b0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .goal-value { font-size: 22px; font-weight: 700; color: #1a1a2e; }
+  .goal-value.accent { color: #2d6a4f; }
+  .goal-value.info { color: #3d7ebf; }
+
+  /* PROGRESS BAR */
+  .progress-wrap { margin-bottom: 20px; }
+  .progress-label { display: flex; justify-content: space-between; font-size: 12px; color: #9090b0; margin-bottom: 6px; }
+  .progress-bar { height: 8px; background: #e8e6e0; border-radius: 20px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #52b788, #2d6a4f); border-radius: 20px; }
+
+  /* CHART */
+  .chart-block { margin-bottom: 20px; }
+  .chart-label { font-size: 11px; font-weight: 600; color: #4a4a6a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .chart-wrap { background: #faf9f6; border-radius: 10px; padding: 16px; border: 1px solid #e8e6e0; }
+
+  /* TABLE */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
+  th { background: #1a1a2e; color: #fff; padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+  td { padding: 10px 12px; border-bottom: 1px solid #e8e6e0; }
+  tr:nth-child(even) td { background: #faf9f6; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 600; }
+  .badge-down { background: #d8f3dc; color: #2d6a4f; }
+  .badge-up { background: #fdecea; color: #e07a5f; }
+  .badge-warn { background: #fdecea; color: #e07a5f; }
+  .badge-ok { background: #d8f3dc; color: #2d6a4f; }
+
+  /* INSIGHT BOX */
+  .insight { background: #f0f7ff; border-left: 4px solid #3d7ebf; border-radius: 0 8px 8px 0; padding: 14px 16px; margin-top: 16px; font-size: 12px; line-height: 1.7; color: #1a1a2e; }
+  .insight strong { color: #3d7ebf; }
+  .insight-warn { background: #fff5f3; border-left-color: #e07a5f; }
+  .insight-warn strong { color: #e07a5f; }
+
+  /* DIVIDER */
+  .divider { height: 1px; background: #e8e6e0; margin: 32px 0; }
+
+  /* FOOTER */
+  .footer { background: #f4f3ef; padding: 20px 48px; font-size: 11px; color: #9090b0; display: flex; justify-content: space-between; margin-top: 40px; }
+
+  /* INBODY GRID */
+  .ib-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .ib-card { background: #faf9f6; border: 1px solid #e8e6e0; border-radius: 10px; padding: 14px 16px; }
+  .ib-label { font-size: 10px; color: #9090b0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .ib-val { font-size: 20px; font-weight: 700; }
+  .ib-warn { color: #e07a5f; }
+  .ib-ok { color: #2d6a4f; }
+  .ib-warn-msg { font-size: 10px; color: #e07a5f; margin-top: 2px; font-weight: 600; }
+
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .no-break { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <div class="cover-clinic">韓醫 Diet · 건강관리 리포트</div>
+  <div class="cover-title"><strong>${patient.name}</strong> 님의 다이어트 관리 기록</div>
+  <div class="cover-sub">
+    <div class="cover-meta">
+      <span>차트번호 <strong>#${patient.chart_number}</strong></span>
+      <span>성별 <strong>${patient.gender === "female" ? "여성" : "남성"}</strong></span>
+      <span>출력일 <strong>${formatDate(today())}</strong></span>
+      ${goal ? `<span>관리 시작일 <strong>${formatDate(goal.start_date)}</strong></span>` : ""}
+    </div>
+  </div>
+</div>
+
+<div class="body">
+
+<!-- SECTION 1: 목표 & 체형 측정 -->
+<div class="section-block no-break">
+  <div class="section-head">
+    <div class="section-num">1</div>
+    <div class="section-title">목표 설정 및 체형 측정</div>
+  </div>
+
+  ${goal ? `
+  <div class="goal-grid">
+    <div class="goal-card">
+      <div class="goal-label">목표 체중</div>
+      <div class="goal-value accent">${goal.target_weight} <span style="font-size:14px;font-weight:400">kg</span></div>
+    </div>
+    <div class="goal-card">
+      <div class="goal-label">목표 기간</div>
+      <div class="goal-value">${goal.target_period_weeks} <span style="font-size:14px;font-weight:400">주</span></div>
+    </div>
+    <div class="goal-card">
+      <div class="goal-label">현재 체중</div>
+      <div class="goal-value">${latestWeight || "-"} <span style="font-size:14px;font-weight:400">kg</span></div>
+    </div>
+    <div class="goal-card">
+      <div class="goal-label">총 감량</div>
+      <div class="goal-value info">${lost ? `-${lost}` : "-"} <span style="font-size:14px;font-weight:400">kg</span></div>
+    </div>
+  </div>
+  ${goal.target_weight && latestWeight && startWeight ? `
+  <div class="progress-wrap">
+    <div class="progress-label">
+      <span>시작 ${startWeight}kg → 현재 ${latestWeight}kg</span>
+      <span>목표 ${goal.target_weight}kg</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" style="width:${Math.max(0,Math.min(100,Math.round((startWeight-latestWeight)/(startWeight-goal.target_weight)*100)))}%"></div>
+    </div>
+  </div>` : ""}
+  ` : '<div style="color:#9090b0;font-size:13px;padding:16px 0">목표가 등록되지 않았습니다</div>'}
+
+  ${ms.length >= 2 ? `
+  <div class="chart-block">
+    <div class="chart-label">체중 추이 (kg)</div>
+    <div class="chart-wrap">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg")}</div>
+  </div>
+  ${ms.some(m => m.bmi) ? `
+  <div class="chart-block">
+    <div class="chart-label">BMI 추이</div>
+    <div class="chart-wrap">${makeSVG(ms, "bmi", "#c9a94e", "BMI", "")}</div>
+  </div>` : ""}
+  ` : '<div style="color:#9090b0;font-size:12px;padding:8px 0">체형 측정 데이터가 2개 이상이어야 그래프가 표시됩니다</div>'}
+
+  ${ms.length > 0 ? `
+  <table>
+    <thead><tr><th>측정일</th><th>키 (cm)</th><th>체중 (kg)</th><th>BMI</th><th>변화</th><th>메모</th></tr></thead>
+    <tbody>
+      ${[...ms].reverse().map((m, i, arr) => {
+        const prev = arr[i+1];
+        const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
+        const cat = bmiCat(m.bmi);
+        return `<tr>
+          <td>${formatDate(m.measured_at)}</td>
+          <td>${m.height || "-"}</td>
+          <td><strong>${m.weight || "-"}</strong></td>
+          <td>${m.bmi ? `${m.bmi} <span class="badge ${["정상"].includes(cat) ? "badge-ok" : "badge-warn"}">${cat}</span>` : "-"}</td>
+          <td>${diff ? `<span class="badge ${parseFloat(diff) < 0 ? "badge-down" : "badge-up"}">${parseFloat(diff) > 0 ? "+" : ""}${diff}</span>` : "-"}</td>
+          <td style="color:#9090b0">${m.memo || "-"}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>` : ""}
+
+  <div class="insight">
+    <strong>BMI 해석 기준 (아시아인)</strong><br>
+    저체중: BMI &lt; 18.5 &nbsp;|&nbsp; 정상: 18.5 ~ 22.9 &nbsp;|&nbsp; 과체중: 23 ~ 24.9 &nbsp;|&nbsp; 비만: ≥ 25<br>
+    <span style="color:#9090b0">※ BMI는 체중과 키로만 계산되므로 근육량이 많은 경우 실제 체성분과 다를 수 있습니다.</span>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- SECTION 2: 인바디 분석 -->
+<div class="section-block no-break">
+  <div class="section-head">
+    <div class="section-num">2</div>
+    <div class="section-title">인바디 체성분 분석</div>
+  </div>
+
+  ${ib.length === 0 ? '<div style="color:#9090b0;font-size:13px;padding:16px 0">인바디 측정 기록이 없습니다</div>' : `
+
+  ${ib.length >= 2 ? `
+  <div class="chart-block">
+    <div class="chart-label">골격근량 추이 (kg)</div>
+    <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, muscle_mass: r.parsed_data?.muscle_mass})), "muscle_mass", "#2d6a4f", "골격근량", "kg")}</div>
+  </div>
+  <div class="chart-block">
+    <div class="chart-label">체지방량 추이 (kg)</div>
+    <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_mass: r.parsed_data?.body_fat_mass})), "body_fat_mass", "#c9a94e", "체지방량", "kg")}</div>
+  </div>
+  <div class="chart-block">
+    <div class="chart-label">체지방률 추이 (%)</div>
+    <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_percent: r.parsed_data?.body_fat_percent})), "body_fat_percent", "#e07a5f", "체지방률", "%")}</div>
+  </div>
+  ` : ""}
+
+  <!-- 최신 인바디 수치 -->
+  ${(() => {
+    const latest = ib[ib.length - 1];
+    const prev = ib[ib.length - 2];
+    const d = latest?.parsed_data || {};
+    const p = prev?.parsed_data || {};
+    const warn = fatWarn(d.body_fat_percent, patient.gender);
+    return `
+    <div style="margin-bottom:16px;font-size:13px;font-weight:600;color:#9090b0">최근 측정: ${formatDate(latest.measured_at)}</div>
+    <div class="ib-grid">
+      <div class="ib-card">
+        <div class="ib-label">골격근량</div>
+        <div class="ib-val ${d.muscle_mass && p.muscle_mass && d.muscle_mass >= p.muscle_mass ? "ib-ok" : ""}">${d.muscle_mass || "-"} <span style="font-size:12px;font-weight:400">kg</span></div>
+        ${d.muscle_mass && p.muscle_mass ? `<div style="font-size:11px;color:${d.muscle_mass >= p.muscle_mass ? "#2d6a4f" : "#e07a5f"}">${d.muscle_mass >= p.muscle_mass ? "▲" : "▼"} ${Math.abs(d.muscle_mass - p.muscle_mass).toFixed(1)}kg 변화</div>` : ""}
+      </div>
+      <div class="ib-card">
+        <div class="ib-label">체지방량</div>
+        <div class="ib-val ${d.body_fat_mass && p.body_fat_mass && d.body_fat_mass < p.body_fat_mass ? "ib-ok" : ""}">${d.body_fat_mass || "-"} <span style="font-size:12px;font-weight:400">kg</span></div>
+        ${d.body_fat_mass && p.body_fat_mass ? `<div style="font-size:11px;color:${d.body_fat_mass < p.body_fat_mass ? "#2d6a4f" : "#e07a5f"}">${d.body_fat_mass < p.body_fat_mass ? "▼" : "▲"} ${Math.abs(d.body_fat_mass - p.body_fat_mass).toFixed(1)}kg 변화</div>` : ""}
+      </div>
+      <div class="ib-card">
+        <div class="ib-label">체지방률</div>
+        <div class="ib-val ${warn ? "ib-warn" : "ib-ok"}">${d.body_fat_percent || "-"} <span style="font-size:12px;font-weight:400">%</span></div>
+        ${warn ? `<div class="ib-warn-msg">${warn}</div>` : ""}
+      </div>
+      <div class="ib-card">
+        <div class="ib-label">기초대사량</div>
+        <div class="ib-val">${d.bmr || "-"} <span style="font-size:12px;font-weight:400">kcal</span></div>
+      </div>
+    </div>
+
+    <!-- 전체 이력 비교 테이블 -->
+    <table>
+      <thead>
+        <tr>
+          <th>항목</th>
+          ${ib.map(r => `<th>${formatDate(r.measured_at)}</th>`).join("")}
+        </tr>
+      </thead>
+      <tbody>
+        ${[
+          { key: "muscle_mass", label: "골격근량 (kg)" },
+          { key: "body_fat_mass", label: "체지방량 (kg)" },
+          { key: "body_fat_percent", label: "체지방률 (%)" },
+          { key: "bmi", label: "BMI" },
+          { key: "bmr", label: "기초대사량 (kcal)" },
+          { key: "total_body_water", label: "체수분 (L)" },
+        ].map(f => `
+          <tr>
+            <td><strong>${f.label}</strong></td>
+            ${ib.map((r, i) => {
+              const val = r.parsed_data?.[f.key];
+              const prevVal = ib[i-1]?.parsed_data?.[f.key];
+              const diff = val && prevVal ? (parseFloat(val) - parseFloat(prevVal)).toFixed(1) : null;
+              const isWarn = f.key === "body_fat_percent" && fatWarn(val, patient.gender);
+              return `<td style="${isWarn ? "color:#e07a5f;font-weight:600" : ""}">
+                ${val != null ? val : "-"}
+                ${diff ? `<span style="font-size:10px;margin-left:4px;color:${parseFloat(diff) < 0 ? "#2d6a4f" : "#e07a5f"}">(${parseFloat(diff) > 0 ? "+" : ""}${diff})</span>` : ""}
+              </td>`;
+            }).join("")}
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+    `;
+  })()}
+
+  <div class="insight insight-warn" style="margin-top:16px">
+    <strong>체지방률 해석 기준</strong><br>
+    여성: 정상 18~27% &nbsp;|&nbsp; <strong>28% 이상</strong> → BMI 정상이어도 마른 비만 가능성<br>
+    남성: 정상 10~24% &nbsp;|&nbsp; <strong>25% 이상</strong> → BMI 정상이어도 마른 비만 가능성<br>
+    <span style="color:#9090b0">※ 마른 비만은 근육량이 적고 체지방이 내장에 축적된 상태로 대사 질환 위험이 높습니다.</span>
+  </div>
+
+  <div class="insight" style="margin-top:12px">
+    <strong>골격근량 해석</strong><br>
+    골격근량이 증가하면 기초대사량이 높아져 체중 감량 효과가 지속됩니다.<br>
+    다이어트 중 골격근량 유지 또는 증가는 매우 긍정적인 신호입니다.
+  </div>
+  `}
+</div>
+
+</div><!-- /body -->
+
+<div class="footer">
+  <span>韓醫 Diet 건강관리 리포트</span>
+  <span>${patient.name} 님 · 출력일 ${formatDate(today())}</span>
+</div>
+
+</body>
+</html>`;
+
+      const w = window.open("", "_blank");
+      if (!w) { alert("팝업이 차단됐습니다. 브라우저에서 팝업을 허용해주세요."); setGenerating(false); return; }
+      w.document.write(html);
+      w.document.close();
+      setTimeout(() => { w.print(); setGenerating(false); }, 800);
+    } catch(err) {
+      alert("PDF 생성 실패: " + err.message);
+      setGenerating(false);
+    }
+  };
 
   return (
     <div>
@@ -551,6 +937,9 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
           <div className="detail-name">{patient.name}</div>
           <div className="detail-meta">차트 #{patient.chart_number} · {patient.gender === "female" ? "여성" : "남성"} · {patient.phone || "연락처 없음"}</div>
         </div>
+        <button className="btn btn-secondary" onClick={generatePDF} disabled={generating} style={{background:"rgba(255,255,255,0.15)", color:"#fff", border:"1px solid rgba(255,255,255,0.3)"}}>
+          {generating ? "생성 중..." : "🖨️ 리포트 PDF 출력"}
+        </button>
       </div>
 
       <div className="tabs">
@@ -643,55 +1032,6 @@ function MeasurementTab({ patient, currentUser }) {
   const previewBMI = calcBMI(mForm.weight, mForm.height);
   const previewCat = bmiCategory(previewBMI);
 
-  const handleMeasurementPrint = () => {
-    const w = window.open("", "_blank");
-    w.document.write(`
-      <html><head><title>체형 측정 기록 - ${patient.name}</title>
-      <style>
-        body { font-family: 'Noto Sans KR', sans-serif; padding: 24px; color: #1a1a2e; }
-        h2 { font-size: 20px; margin-bottom: 4px; }
-        .sub { font-size: 13px; color: #9090b0; margin-bottom: 20px; }
-        .goal-box { display: flex; gap: 32px; background: #f4f3ef; padding: 16px; border-radius: 8px; margin-bottom: 20px; }
-        .goal-item label { font-size: 11px; color: #4a4a6a; display: block; }
-        .goal-item strong { font-size: 18px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th { background: #f4f3ef; padding: 8px 12px; text-align: left; font-size: 11px; color: #4a4a6a; border-bottom: 2px solid #e8e6e0; }
-        td { padding: 10px 12px; border-bottom: 1px solid #e8e6e0; }
-        .down { color: #2d6a4f; font-weight: 600; }
-        .up { color: #e07a5f; font-weight: 600; }
-        @media print { body { padding: 0; } }
-      </style></head><body>
-      <h2>체형 측정 기록</h2>
-      <div class="sub">${patient.name} · 차트 #${patient.chart_number} · 출력일: ${formatDate(today())}</div>
-      ${goal ? `<div class="goal-box">
-        <div class="goal-item"><label>목표 체중</label><strong>${goal.target_weight} kg</strong></div>
-        <div class="goal-item"><label>목표 기간</label><strong>${goal.target_period_weeks}주</strong></div>
-        <div class="goal-item"><label>시작일</label><strong>${formatDate(goal.start_date)}</strong></div>
-        ${lost ? `<div class="goal-item"><label>현재까지 감량</label><strong>-${lost} kg</strong></div>` : ""}
-      </div>` : ""}
-      <table>
-        <thead><tr><th>측정일</th><th>키(cm)</th><th>체중(kg)</th><th>BMI</th><th>변화(kg)</th><th>메모</th></tr></thead>
-        <tbody>
-          ${[...measurements].reverse().map((m, i, arr) => {
-            const prev = arr[i+1];
-            const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
-            const cat = bmiCategory(m.bmi);
-            return `<tr>
-              <td>${formatDate(m.measured_at)}</td>
-              <td>${m.height || "-"}</td>
-              <td><strong>${m.weight || "-"}</strong></td>
-              <td>${m.bmi ? `${m.bmi} ${cat ? `(${cat.label})` : ""}` : "-"}</td>
-              <td>${diff ? `<span class="${parseFloat(diff) < 0 ? "down" : "up"}">${diff > 0 ? "+" : ""}${diff}</span>` : "-"}</td>
-              <td>${m.memo || "-"}</td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-      </body></html>
-    `);
-    w.document.close();
-    w.print();
-  };
 
   return (
     <div>
@@ -737,10 +1077,7 @@ function MeasurementTab({ patient, currentUser }) {
       <div className="card">
         <div className="section-header">
           <div className="section-title">📊 체형 측정 기록</div>
-          <div style={{display:"flex", gap:8}}>
-            {measurements.length > 0 && <button className="btn btn-secondary btn-sm" onClick={handleMeasurementPrint}>🖨️ 출력 / PDF</button>}
-            <button className="btn btn-primary btn-sm" onClick={() => setShowMeasureForm(!showMeasureForm)}>+ 측정값 입력</button>
-          </div>
+<button className="btn btn-primary btn-sm" onClick={() => setShowMeasureForm(!showMeasureForm)}>+ 측정값 입력</button>
         </div>
         {showMeasureForm && (
           <div style={{background:"var(--surface2)", borderRadius:8, padding:16, marginBottom:16}}>
@@ -1025,28 +1362,6 @@ function InbodyTab({ patient, currentUser }) {
     load();
   };
 
-  const handlePrint = () => {
-    const printContent = document.getElementById("inbody-print-area");
-    if (!printContent) { alert("출력할 내용이 없습니다."); return; }
-    const w = window.open("", "_blank");
-    if (!w) { alert("팝업이 차단됐습니다. 브라우저에서 팝업을 허용해주세요."); return; }
-    w.document.write(`<!DOCTYPE html><html><head><title>인바디 분석 - ${patient.name}</title>
-      <style>
-        body{font-family:sans-serif;padding:24px;color:#1a1a2e;margin:0}
-        h2{font-size:20px;margin-bottom:4px}
-        .sub{font-size:13px;color:#9090b0;margin-bottom:20px}
-        table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px}
-        th{background:#f4f3ef;padding:8px 12px;text-align:left;font-size:11px;color:#4a4a6a;border-bottom:2px solid #e8e6e0}
-        td{padding:10px 12px;border-bottom:1px solid #e8e6e0}
-        .warn{color:#e07a5f;font-weight:600}
-        .section{font-size:14px;font-weight:700;margin:16px 0 8px;border-bottom:1px solid #e8e6e0;padding-bottom:4px}
-        .inbody-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e8e6e0;font-size:13px}
-        @media print{body{padding:0}}
-      </style></head><body>${printContent.innerHTML}</body></html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 500);
-  };
-
   const chartData = records.map(r => ({
     measured_at: r.measured_at,
     muscle_mass: r.parsed_data?.muscle_mass,
@@ -1114,9 +1429,6 @@ function InbodyTab({ patient, currentUser }) {
       <div className="card">
         <div className="section-header">
           <div className="section-title">🗂 측정 이력</div>
-          {records.length > 0 && (
-            <button className="btn btn-secondary btn-sm" onClick={handlePrint}>🖨️ 출력 / PDF 저장</button>
-          )}
         </div>
         {records.length === 0 ? <div className="empty">인바디 기록이 없습니다</div> : (
           <div>
