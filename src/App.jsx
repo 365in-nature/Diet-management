@@ -465,7 +465,7 @@ function PatientListPage({ onSelectPatient, currentUser }) {
                 {pkg && (
                   <div style={{marginTop: 8}}>
                     <span className="badge badge-gold">
-                      {pkg.package_months}개월 패키지 · 잔여 {pkg.remaining_months}개월
+                      {pkg.package_months}개월 패키지 · 잔여 약 {pkg.remaining_months}개월
                     </span>
                   </div>
                 )}
@@ -803,52 +803,30 @@ function InbodyTab({ patient, currentUser }) {
 
     const { data: urlData } = supabase.storage.from("inbody-pdfs").getPublicUrl(fileName);
 
-    // PDF를 base64로 변환 후 Claude API로 파싱
+    // PDF를 base64로 변환 후 서버리스 함수로 파싱
     setParsing(true);
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const base64 = ev.target.result.split(",")[1];
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
+        const res = await fetch("/api/parse-inbody", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1000,
-            messages: [{
-              role: "user",
-              content: [
-                { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-                { type: "text", text: `이 InBody 결과지에서 다음 수치를 추출해서 JSON으로만 응답해주세요 (단위 제외, 숫자만):
-{
-  "measured_date": "YYYY-MM-DD",
-  "weight": 숫자,
-  "body_fat_percent": 숫자,
-  "muscle_mass": 숫자,
-  "bmi": 숫자,
-  "bmr": 숫자,
-  "body_fat_mass": 숫자,
-  "total_body_water": 숫자
-}
-없는 항목은 null로 표시. JSON만 응답, 설명 없이.` }
-              ]
-            }]
-          })
+          body: JSON.stringify({ base64, mediaType: "application/pdf" }),
         });
         const result = await res.json();
-        const text = result.content?.[0]?.text || "{}";
-        const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+        if (!res.ok) throw new Error(result.error || "파싱 실패");
+        const parsed = result.parsed;
 
         await supabase.from("inbody_records").insert([{
           patient_id: patient.id,
           measured_at: parsed.measured_date || today(),
           parsed_data: parsed,
           pdf_url: urlData.publicUrl,
-          created_by: currentUser.id
         }]);
         load();
       } catch(err) {
-        alert("파싱 실패. 수동으로 입력해주세요.");
+        alert("파싱 실패: " + err.message);
       }
       setParsing(false);
       setUploading(false);
@@ -1046,16 +1024,30 @@ function PrescriptionTab({ patient, currentUser }) {
   const renderPackageProgress = () => {
     if (!pkg) return null;
     const total = pkg.package_months;
-    const used = total - pkg.remaining_months;
+    const totalDays = total * 30;
+
+    // 예약 해피콜이 완료된 처방의 duration_days 합산
+    const usedDays = prescriptions.reduce((sum, rx) => {
+      const rxHCs = happycalls[rx.id] || [];
+      const reservationDone = rxHCs.find(h => h.call_type === "reservation" && h.is_done);
+      if (reservationDone) return sum + (rx.duration_days || 0);
+      return sum;
+    }, 0);
+
+    const remainingDays = Math.max(0, totalDays - usedDays);
+    const remainingMonths = Math.round(remainingDays / 30 * 10) / 10;
+    const usedMonths = Math.min(total, Math.floor(usedDays / 30));
+
     return (
       <div className="pkg-status">
         {Array.from({length: total}).map((_, i) => (
-          <div key={i} className={`pkg-month ${i < used ? "pkg-month-done" : "pkg-month-remaining"}`}>
-            {i < used ? "✓" : `${i+1}M`}
+          <div key={i} className={`pkg-month ${i < usedMonths ? "pkg-month-done" : "pkg-month-remaining"}`}>
+            {i < usedMonths ? "✓" : `${i+1}M`}
           </div>
         ))}
         <div style={{marginLeft:8, fontSize:13, color:"var(--ink-muted)", alignSelf:"center"}}>
-          잔여 <strong style={{color:"var(--accent)"}}>{pkg.remaining_months}개월</strong>
+          잔여 <strong style={{color:"var(--accent)"}}>약 {remainingMonths}개월</strong>
+          <span style={{color:"var(--ink-muted)", marginLeft:4}}>({remainingDays}일)</span>
         </div>
       </div>
     );
