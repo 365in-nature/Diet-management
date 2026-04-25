@@ -386,6 +386,7 @@ function PatientListPage({ onSelectPatient, currentUser }) {
   const loadPatients = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase.from("patients").select("*, goals(*), packages(*), measurements(*)").order("registered_at", { ascending: false });
+    const { data: allPrescriptions } = await supabase.from("prescriptions").select("id, patient_id, duration_days, is_completed").order("prescribed_at");
     const patientList = data || [];
 
     // 해피콜 알림 확인 (happycall_logs 포함)
@@ -434,7 +435,31 @@ function PatientListPage({ onSelectPatient, currentUser }) {
       return aScore - bScore;
     });
 
-    setPatients(sorted.map(p => ({ ...p, _premiumAlert: premiumAlertSet.has(p.id) })));
+    // 실제 잔여 기간 계산 (처방 기반)
+    const rxByPatient = {};
+    (allPrescriptions || []).forEach(rx => {
+      if (!rxByPatient[rx.patient_id]) rxByPatient[rx.patient_id] = [];
+      rxByPatient[rx.patient_id].push(rx);
+    });
+
+    setPatients(sorted.map(p => {
+      const patientPkgs = (p.packages || []).filter(pk => pk.is_active);
+      const patientRxs = rxByPatient[p.id] || [];
+      const patientHCs = (prescriptions || []).filter(pr => pr.patient_id === p.id);
+      let realRemainingMonths = null;
+      if (patientPkgs.length > 0) {
+        const totalDays = patientPkgs.reduce((s, pk) => s + Number(pk.package_months) * 30, 0);
+        const usedDays = patientRxs.reduce((sum, rx) => {
+          const hcs = patientHCs.find(pr => pr.id === rx.id)?.happycall_logs || [];
+          const resDone = hcs.find(h => h.call_type === "reservation" && h.is_done);
+          if (resDone || rx.is_completed) return sum + (rx.duration_days || 0);
+          return sum;
+        }, 0);
+        const remainingDays = Math.max(0, totalDays - usedDays);
+        realRemainingMonths = Math.round(remainingDays / 30 * 10) / 10;
+      }
+      return { ...p, _premiumAlert: premiumAlertSet.has(p.id), _realRemainingMonths: realRemainingMonths };
+    }));
     setLoading(false);
   }, []);
 
@@ -471,7 +496,12 @@ function PatientListPage({ onSelectPatient, currentUser }) {
               <div key={p.id} className="patient-card" onClick={() => onSelectPatient(p)}>
                 <div className="patient-card-header">
                   <div>
-                    <div className="patient-name">{p.name}</div>
+                    <div className="patient-name">
+                      {p.name}
+                      {p.goals?.[0]?.constitution && (
+                        <span style={{fontSize:13, fontWeight:500, color:"var(--info)", marginLeft:6}}>({p.goals[0].constitution})</span>
+                      )}
+                    </div>
                     <div className="patient-chart">차트 #{p.chart_number}</div>
                   </div>
                   <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
@@ -511,7 +541,7 @@ function PatientListPage({ onSelectPatient, currentUser }) {
                 {pkg && (
                   <div style={{marginTop: 8}}>
                     <span className="badge badge-gold">
-                      {pkg.package_months}개월 패키지 · 잔여 약 {pkg.remaining_months}개월
+                      {pkg.package_months}개월 패키지 · 잔여 약 {p._realRemainingMonths != null ? p._realRemainingMonths : pkg.remaining_months}개월
                     </span>
                   </div>
                 )}
@@ -1140,7 +1170,7 @@ function MeasurementTab({ patient, currentUser }) {
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [showMeasureForm, setShowMeasureForm] = useState(false);
   const [mForm, setMForm] = useState({ measured_at: today(), height: "", weight: "", memo: "" });
-  const [gForm, setGForm] = useState({ target_weight: "", target_period_weeks: "", start_date: today() });
+  const [gForm, setGForm] = useState({ target_weight: "", target_period_weeks: "", start_date: today(), constitution: "" });
 
   const load = useCallback(async () => {
     const { data: m } = await supabase.from("measurements").select("*").eq("patient_id", patient.id).order("measured_at");
@@ -1176,7 +1206,7 @@ function MeasurementTab({ patient, currentUser }) {
   };
 
   useEffect(() => {
-    if (goal) setGForm({ target_weight: goal.target_weight || "", target_period_weeks: goal.target_period_weeks || "", start_date: goal.start_date || today() });
+    if (goal) setGForm({ target_weight: goal.target_weight || "", target_period_weeks: goal.target_period_weeks || "", start_date: goal.start_date || today(), constitution: goal.constitution || "" });
   }, [goal]);
 
   const latestWeight = measurements[measurements.length-1]?.weight;
@@ -1201,6 +1231,7 @@ function MeasurementTab({ patient, currentUser }) {
               <div><div className="form-label">목표 체중</div><div style={{fontSize:20,fontWeight:700,color:"var(--accent)"}}>{goal.target_weight} kg</div></div>
               <div><div className="form-label">목표 기간</div><div style={{fontSize:20,fontWeight:700}}>{goal.target_period_weeks}주</div></div>
               <div><div className="form-label">시작일</div><div style={{fontSize:14,fontWeight:600}}>{formatDate(goal.start_date)}</div></div>
+              {goal.constitution && <div><div className="form-label">체질</div><div style={{fontSize:16,fontWeight:700,color:"var(--info)"}}>{goal.constitution}</div></div>}
               {lost && <div><div className="form-label">현재까지 감량</div><div style={{fontSize:20,fontWeight:700,color:"var(--info)"}}>-{lost} kg</div></div>}
             </div>
             {!showGoalForm && latestWeight && goal.target_weight && (
@@ -1226,6 +1257,15 @@ function MeasurementTab({ patient, currentUser }) {
               <div className="form-group">
                 <label className="form-label">시작일</label>
                 <input className="form-input" type="date" value={gForm.start_date} onChange={e => setGForm({...gForm, start_date: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">체질</label>
+                <select className="form-select" value={gForm.constitution} onChange={e => setGForm({...gForm, constitution: e.target.value})}>
+                  <option value="">— 선택 —</option>
+                  {["금양","금음","토양","토음","목양","목음","수양","수음"].map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </div>
             </div>
             {/* 실시간 목표 체중 예측 그래프 */}
