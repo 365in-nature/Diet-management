@@ -283,27 +283,34 @@ const styles = `
 // =============================================
 // MINI CHART COMPONENT
 // =============================================
-function LineChart({ data, valueKey, color = "#52b788", label = "" }) {
+function LineChart({ data, valueKey, color = "#52b788", label = "", showDiff = false }) {
   if (!data || data.length < 2) return <div className="empty" style={{height: 120}}>데이터가 부족합니다 (최소 2개)</div>;
 
   const values = data.map(d => d[valueKey]).filter(v => v != null);
   const min = Math.min(...values) - 1;
   const max = Math.max(...values) + 1;
-  const w = 500, h = 160, padX = 40, padY = 20;
+  const w = 500, h = 180, padX = 40, padY = showDiff ? 36 : 20;
 
   const pts = data
     .filter(d => d[valueKey] != null)
     .map((d, i, arr) => {
       const x = padX + (i / (arr.length - 1)) * (w - padX * 2);
       const y = padY + ((max - d[valueKey]) / (max - min)) * (h - padY * 2);
-      return { x, y, d };
+      const prev = arr[i - 1];
+      const diff = prev && prev[valueKey] != null
+        ? (parseFloat(d[valueKey]) - parseFloat(prev[valueKey])).toFixed(1)
+        : null;
+      const diffPct = prev && prev[valueKey] != null
+        ? ((parseFloat(d[valueKey]) - parseFloat(prev[valueKey])) / parseFloat(prev[valueKey]) * 100).toFixed(1)
+        : null;
+      return { x, y, d, diff, diffPct };
     });
 
   const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
   const areaD = `${pathD} L ${pts[pts.length-1].x} ${h} L ${pts[0].x} ${h} Z`;
 
   return (
-    <div className="chart-wrap">
+    <div className="chart-wrap" style={{height: showDiff ? 200 : 180}}>
       <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
         <defs>
           <linearGradient id={`g-${valueKey}`} x1="0" y1="0" x2="0" y2="1">
@@ -322,6 +329,11 @@ function LineChart({ data, valueKey, color = "#52b788", label = "" }) {
             <text x={p.x} y={p.y - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill={color}>
               {p.d[valueKey]}
             </text>
+            {showDiff && p.diff !== null && (
+              <text x={p.x} y={p.y - 20} textAnchor="middle" fontSize="9" fill={parseFloat(p.diff) < 0 ? "#2d6a4f" : "#e07a5f"}>
+                {parseFloat(p.diff) > 0 ? "+" : ""}{p.diff}kg ({parseFloat(p.diffPct) > 0 ? "+" : ""}{p.diffPct}%)
+              </text>
+            )}
           </g>
         ))}
       </svg>
@@ -472,7 +484,7 @@ function PatientListPage({ onSelectPatient, currentUser }) {
                         {a.kind === "도착" ? "📦" : "📅"} {a.type === "tang" ? "탕약" : "환약"} {a.kind} 해피콜
                       </span>
                     ))}
-                    {p._premiumAlert && todayAlerts.length === 0 && (
+                    {p._premiumAlert && (
                       <span className="badge badge-warn">🏥 프리미엄 재내원 필요</span>
                     )}
                     <button className="btn btn-xs btn-danger" onClick={async e => {
@@ -1031,31 +1043,38 @@ function bmiCategory(bmi) {
 // =============================================
 // WEIGHT PROJECTION GRAPH (목표 체중 예상 기간)
 // =============================================
-function WeightProjectionChart({ currentWeight, targetWeight, bmi }) {
-  if (!currentWeight || !targetWeight || !bmi) return null;
+function WeightProjectionChart({ currentWeight, targetWeight, height }) {
+  if (!currentWeight || !targetWeight || !height) return null;
   const cw = parseFloat(currentWeight);
   const tw = parseFloat(targetWeight);
-  const b = parseFloat(bmi);
-  if (cw <= tw) return null; // 이미 목표 달성
+  const h = parseFloat(height) / 100;
+  if (cw <= tw) return null;
 
-  // BMI 기준 월별 감량률 범위
-  let minRate, maxRate, category;
-  if (b >= 25) { minRate = 0.08; maxRate = 0.10; category = "비만"; }
-  else if (b >= 23) { minRate = 0.06; maxRate = 0.08; category = "과체중"; }
-  else { minRate = 0.04; maxRate = 0.06; category = "정상체중"; }
+  // BMI 기준 동적 감량률 (매월 체중 기준으로 재계산)
+  const getRates = (w) => {
+    const bmi = w / (h * h);
+    if (bmi >= 25) return { min: 0.08, max: 0.10, cat: "비만" };
+    if (bmi >= 23) return { min: 0.06, max: 0.08, cat: "과체중" };
+    return { min: 0.04, max: 0.06, cat: "정상체중" };
+  };
 
-  // 월별 예상 체중 계산 (최소/최대 감량률)
+  // 월별 예상 체중 계산 — 매월 BMI 재계산 후 감량률 적용
   const rows = [];
   let wMin = cw, wMax = cw;
-  for (let m = 0; m <= 24; m++) {
+  const initialCat = getRates(cw).cat;
+  for (let m = 0; m <= 36; m++) {
     rows.push({ month: m, min: parseFloat(wMin.toFixed(1)), max: parseFloat(wMax.toFixed(1)) });
     if (wMin <= tw && wMax <= tw) break;
-    wMin = Math.max(tw, wMin * (1 - maxRate));
-    wMax = Math.max(tw, wMax * (1 - minRate));
+    const rMin = getRates(wMin);
+    const rMax = getRates(wMax);
+    wMin = Math.max(tw, wMin * (1 - rMin.max));
+    wMax = Math.max(tw, wMax * (1 - rMax.min));
   }
 
   const reachMin = rows.find(r => r.min <= tw)?.month;
   const reachMax = rows.find(r => r.max <= tw)?.month;
+  const category = initialCat;
+  const { min: minRate, max: maxRate } = getRates(cw);
 
   // SVG chart
   const display = rows.slice(0, Math.min(rows.length, 13));
@@ -1188,7 +1207,7 @@ function MeasurementTab({ patient, currentUser }) {
               <WeightProjectionChart
                 currentWeight={latestWeight}
                 targetWeight={goal.target_weight}
-                bmi={calcBMI(latestWeight, measurements[measurements.length-1]?.height || measurements[0]?.height)}
+                height={measurements[measurements.length-1]?.height || measurements[0]?.height}
               />
             )}
           </div>
@@ -1214,7 +1233,7 @@ function MeasurementTab({ patient, currentUser }) {
               <WeightProjectionChart
                 currentWeight={latestWeight}
                 targetWeight={gForm.target_weight}
-                bmi={calcBMI(latestWeight, measurements[measurements.length-1]?.height || measurements[0]?.height)}
+                height={measurements[measurements.length-1]?.height || measurements[0]?.height}
               />
             )}
             <div className="form-actions">
@@ -1290,7 +1309,7 @@ function MeasurementTab({ patient, currentUser }) {
                 </div>
               )}
               <div className="form-label" style={{marginBottom:8}}>체중 추이 (kg)</div>
-              <LineChart data={measurements} valueKey="weight" color="var(--accent)" />
+              <LineChart data={measurements} valueKey="weight" color="var(--accent)" showDiff={true} />
               {measurements.some(m => m.bmi) && (
                 <>
                   <div className="form-label" style={{margin:"16px 0 8px"}}>BMI 추이</div>
@@ -1509,16 +1528,26 @@ function InbodyTab({ patient, currentUser }) {
       measured_at: measuredAt,
       parsed_data: formData,
     }).eq("id", record.id);
-    // 체형 측정도 같이 업데이트
+    // 체형 측정 — 날짜 기준으로 기존 기록 검색 후 upsert (memo 조건 제거)
     if (formData.weight) {
       const { data: existing } = await supabase.from("measurements")
-        .select("id").eq("patient_id", patient.id).eq("measured_at", measuredAt).eq("memo", "인바디 자동 입력").limit(1);
+        .select("id").eq("patient_id", patient.id).eq("measured_at", measuredAt).limit(1);
       if (existing && existing.length > 0) {
         await supabase.from("measurements").update({
           height: formData.height || null,
           weight: formData.weight || null,
           bmi: formData.bmi || null,
         }).eq("id", existing[0].id);
+      } else {
+        // 해당 날짜에 체형 측정 기록이 없으면 새로 생성
+        await supabase.from("measurements").insert([{
+          patient_id: patient.id,
+          measured_at: measuredAt,
+          height: formData.height || null,
+          weight: formData.weight || null,
+          bmi: formData.bmi || null,
+          memo: "인바디 자동 입력",
+        }]);
       }
     }
     setEditingRecord(null);
