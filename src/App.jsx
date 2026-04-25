@@ -1778,8 +1778,7 @@ function PrescriptionTab({ patient, currentUser }) {
   };
 
   const deletePkg = async (pkgId) => {
-    if (!window.confirm("이 패키지를 삭제하시겠습니까?
-삭제 후 종료일이 자동으로 재계산됩니다.")) return;
+    if (!window.confirm("이 패키지를 삭제하시겠습니까?\n삭제 후 종료일이 자동으로 재계산됩니다.")) return;
     await supabase.from("packages").delete().eq("id", pkgId);
     // 남은 패키지로 종료일 재계산
     const remaining = pkgs.filter(p => p.id !== pkgId);
