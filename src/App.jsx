@@ -291,8 +291,9 @@ function LineChart({ data, valueKey, color = "#52b788", label = "", showDiff = f
   const max = Math.max(...values) + 1;
   const w = 500, h = 180, padX = 40, padY = showDiff ? 36 : 20;
 
-  const pts = data
-    .filter(d => d[valueKey] != null)
+  const filteredData = data.filter(d => d[valueKey] != null);
+  const firstVal = filteredData.length > 0 ? parseFloat(filteredData[0][valueKey]) : null;
+  const pts = filteredData
     .map((d, i, arr) => {
       const x = padX + (i / (arr.length - 1)) * (w - padX * 2);
       const y = padY + ((max - d[valueKey]) / (max - min)) * (h - padY * 2);
@@ -300,8 +301,9 @@ function LineChart({ data, valueKey, color = "#52b788", label = "", showDiff = f
       const diff = prev && prev[valueKey] != null
         ? (parseFloat(d[valueKey]) - parseFloat(prev[valueKey])).toFixed(1)
         : null;
-      const diffPct = prev && prev[valueKey] != null
-        ? ((parseFloat(d[valueKey]) - parseFloat(prev[valueKey])) / parseFloat(prev[valueKey]) * 100).toFixed(1)
+      // 최초 값 대비 변화율
+      const diffPct = firstVal != null && i > 0
+        ? ((parseFloat(d[valueKey]) - firstVal) / firstVal * 100).toFixed(1)
         : null;
       return { x, y, d, diff, diffPct };
     });
@@ -329,9 +331,9 @@ function LineChart({ data, valueKey, color = "#52b788", label = "", showDiff = f
             <text x={p.x} y={p.y - 8} textAnchor="middle" fontSize="10" fontWeight="600" fill={color}>
               {p.d[valueKey]}
             </text>
-            {showDiff && p.diff !== null && (
-              <text x={p.x} y={p.y - 20} textAnchor="middle" fontSize="9" fill={parseFloat(p.diff) < 0 ? "#2d6a4f" : "#e07a5f"}>
-                {parseFloat(p.diff) > 0 ? "+" : ""}{p.diff}kg ({parseFloat(p.diffPct) > 0 ? "+" : ""}{p.diffPct}%)
+            {showDiff && p.diffPct !== null && (
+              <text x={p.x} y={p.y - 20} textAnchor="middle" fontSize="9" fill={parseFloat(p.diffPct) < 0 ? "#2d6a4f" : "#e07a5f"}>
+                최초 대비 {parseFloat(p.diffPct) > 0 ? "+" : ""}{p.diffPct}%
               </text>
             )}
           </g>
@@ -780,8 +782,8 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   .ib-warn-msg { font-size: 10px; color: #e07a5f; margin-top: 2px; font-weight: 600; }
 
   @media print {
-    @page { margin: 16mm 14mm; }
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { margin: 0; size: A4; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 16mm 14mm; }
     .no-break { page-break-inside: avoid; }
   }
 </style>
@@ -1219,13 +1221,25 @@ function MeasurementTab({ patient, currentUser }) {
               {goal.constitution && <div><div className="form-label">체질</div><div style={{fontSize:16,fontWeight:700,color:"var(--info)"}}>{goal.constitution}</div></div>}
               {lost && <div><div className="form-label">현재까지 감량</div><div style={{fontSize:20,fontWeight:700,color:"var(--info)"}}>-{lost} kg</div></div>}
             </div>
-            {!showGoalForm && latestWeight && goal.target_weight && (
-              <WeightProjectionChart
-                currentWeight={latestWeight}
+            {!showGoalForm && goal.target_weight && (() => {
+              const startDateWeight = (() => {
+                if (!measurements.length) return null;
+                const sorted = [...measurements].sort((a,b) => a.measured_at.localeCompare(b.measured_at));
+                const startDate = goal.start_date;
+                if (!startDate) return sorted[0]?.weight;
+                const closest = sorted.reduce((a, b) =>
+                  Math.abs(new Date(a.measured_at) - new Date(startDate)) <= Math.abs(new Date(b.measured_at) - new Date(startDate)) ? a : b
+                );
+                return closest?.weight;
+              })();
+              const chartHeight = measurements.find(m => m.height) ? measurements.find(m => m.height).height : null;
+              if (!startDateWeight) return null;
+              return <WeightProjectionChart
+                currentWeight={startDateWeight}
                 targetWeight={goal.target_weight}
-                height={measurements[measurements.length-1]?.height || measurements[0]?.height}
-              />
-            )}
+                height={chartHeight}
+              />;
+            })()}
           </div>
         ) : <div className="empty" style={{padding:16}}>목표를 등록해주세요</div>}
         {showGoalForm && (
@@ -1254,13 +1268,25 @@ function MeasurementTab({ patient, currentUser }) {
               </div>
             </div>
             {/* 실시간 목표 체중 예측 그래프 */}
-            {gForm.target_weight && latestWeight && (
-              <WeightProjectionChart
-                currentWeight={latestWeight}
+            {gForm.target_weight && (() => {
+              const startDateWeight = (() => {
+                if (!measurements.length) return latestWeight;
+                const sorted = [...measurements].sort((a,b) => a.measured_at.localeCompare(b.measured_at));
+                const startDate = gForm.start_date;
+                if (!startDate) return sorted[0]?.weight;
+                const closest = sorted.reduce((a, b) =>
+                  Math.abs(new Date(a.measured_at) - new Date(startDate)) <= Math.abs(new Date(b.measured_at) - new Date(startDate)) ? a : b
+                );
+                return closest?.weight;
+              })();
+              const chartHeight = measurements.find(m => m.height)?.height;
+              if (!startDateWeight) return null;
+              return <WeightProjectionChart
+                currentWeight={startDateWeight}
                 targetWeight={gForm.target_weight}
-                height={measurements[measurements.length-1]?.height || measurements[0]?.height}
-              />
-            )}
+                height={chartHeight}
+              />;
+            })()}
             <div className="form-actions">
               <button className="btn btn-secondary btn-sm" onClick={() => setShowGoalForm(false)}>취소</button>
               <button className="btn btn-primary btn-sm" onClick={saveGoal}>저장</button>
@@ -1352,8 +1378,10 @@ function MeasurementTab({ patient, currentUser }) {
             <tbody>
               {[...measurements].reverse().map((m, i, arr) => {
                 const prev = arr[i+1];
+                const firstWeight = arr[arr.length - 1]?.weight; // reversed이므로 마지막이 최초
                 const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
-                const diffPct = prev && m.weight && prev.weight ? ((m.weight - prev.weight) / prev.weight * 100).toFixed(1) : null;
+                const diffPct = firstWeight && m.weight && i < arr.length - 1
+                  ? ((parseFloat(m.weight) - parseFloat(firstWeight)) / parseFloat(firstWeight) * 100).toFixed(1) : null;
                 const cat = bmiCategory(m.bmi);
                 return (
                   <tr key={m.id}>
