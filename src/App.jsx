@@ -637,18 +637,20 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
       const lost = startWeight && latestWeight ? (startWeight - latestWeight).toFixed(1) : null;
 
       // SVG 그래프 생성 함수
-      const makeSVG = (data, valueKey, color, label, unit) => {
+      const makeSVG = (data, valueKey, color, label, unit, showPctChange = false) => {
         if (!data || data.length < 2) return `<div style="color:#9090b0;font-size:12px;padding:20px 0">데이터가 부족합니다 (최소 2개)</div>`;
         const values = data.map(d => parseFloat(d[valueKey])).filter(v => !isNaN(v));
         if (values.length < 2) return `<div style="color:#9090b0;font-size:12px;padding:20px 0">데이터가 부족합니다</div>`;
         const min = Math.min(...values) - 1;
         const max = Math.max(...values) + 1;
-        const w = 500, h = 140, padX = 50, padY = 20;
+        const w = 500, h = 160, padX = 50, padY = showPctChange ? 36 : 20;
+        const firstVal = values[0];
         const pts = data.filter(d => !isNaN(parseFloat(d[valueKey]))).map((d, i, arr) => ({
           x: padX + (i / (arr.length - 1)) * (w - padX * 2),
           y: padY + ((max - parseFloat(d[valueKey])) / (max - min)) * (h - padY * 2),
           val: parseFloat(d[valueKey]),
           date: (d.measured_at || "").slice(5),
+          isLast: i === arr.length - 1,
         }));
         const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
         const areaD = `${pathD} L ${pts[pts.length-1].x} ${h} L ${pts[0].x} ${h} Z`;
@@ -659,11 +661,15 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
           </linearGradient></defs>
           <path d="${areaD}" fill="url(#g${valueKey})"/>
           <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          ${pts.map(p => `
+          ${pts.map(p => {
+            const pctChange = (showPctChange && p.isLast && firstVal) ? ((p.val - firstVal) / firstVal * 100).toFixed(1) : null;
+            const pctColor = pctChange && parseFloat(pctChange) < 0 ? "#2d6a4f" : "#e07a5f";
+            return `
             <circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" stroke="white" stroke-width="2"/>
             <text x="${p.x}" y="${h - 4}" text-anchor="middle" font-size="9" fill="#9090b0">${p.date}</text>
             <text x="${p.x}" y="${p.y - 8}" text-anchor="middle" font-size="10" font-weight="600" fill="${color}">${p.val}</text>
-          `).join("")}
+            ${pctChange ? `<text x="${p.x}" y="${p.y - 22}" text-anchor="middle" font-size="9" font-weight="700" fill="${pctColor}">${parseFloat(pctChange) > 0 ? "+" : ""}${pctChange}%</text>` : ""}
+          `}).join("")}
         </svg>`;
       };
 
@@ -774,29 +780,25 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   .ib-warn-msg { font-size: 10px; color: #e07a5f; margin-top: 2px; font-weight: 600; }
 
   @media print {
+    @page { margin: 16mm 14mm; }
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .no-break { page-break-inside: avoid; }
   }
 </style>
 </head>
 <body>
 
-<!-- COVER -->
-<div class="cover">
-  <div class="cover-clinic">韓醫 Diet · 건강관리 리포트</div>
-  <div class="cover-title"><strong>${patient.name}</strong> 님의 다이어트 관리 기록</div>
-  <div class="cover-sub">
-    <div class="cover-meta">
-      <span>차트번호 <strong>#${patient.chart_number}</strong></span>
-      <span>성별 <strong>${patient.gender === "female" ? "여성" : "남성"}</strong></span>
-      <span>출력일 <strong>${formatDate(today())}</strong></span>
-      ${goal ? `<span>관리 시작일 <strong>${formatDate(goal.start_date)}</strong></span>` : ""}
-    </div>
+<div class="body">
+<div style="border-bottom:2px solid #1a1a2e;padding-bottom:12px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:flex-end;">
+  <div>
+    <div style="font-size:11px;letter-spacing:2px;color:#52b788;margin-bottom:4px">韓醫 DIET · 건강관리 리포트</div>
+    <div style="font-size:22px;font-weight:700;color:#1a1a2e">${patient.name} 님의 다이어트 관리 기록</div>
+  </div>
+  <div style="font-size:11px;color:#9090b0;text-align:right;line-height:1.8">
+    <div>차트번호 #${patient.chart_number} &nbsp;·&nbsp; ${patient.gender === "female" ? "여성" : "남성"}</div>
+    <div>출력일 ${formatDate(today())}${goal ? " &nbsp;·&nbsp; 관리 시작일 " + formatDate(goal.start_date) : ""}</div>
   </div>
 </div>
-
-<div class="body">
 
 <!-- SECTION 1: 목표 & 체형 측정 -->
 <div class="section-block no-break">
@@ -839,7 +841,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   ${ms.length >= 2 ? `
   <div class="chart-block">
     <div class="chart-label">체중 추이 (kg)</div>
-    <div class="chart-wrap">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg")}</div>
+    <div class="chart-wrap">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg", true)}</div>
   </div>
   ${ms.some(m => m.bmi) ? `
   <div class="chart-block">
@@ -848,26 +850,32 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   </div>` : ""}
   ` : '<div style="color:#9090b0;font-size:12px;padding:8px 0">체형 측정 데이터가 2개 이상이어야 그래프가 표시됩니다</div>'}
 
-  ${ms.length > 0 ? `
-  <table>
-    <thead><tr><th>측정일</th><th>키 (cm)</th><th>체중 (kg)</th><th>BMI</th><th>변화 (kg / %)</th><th>메모</th></tr></thead>
+  ${ms.length > 0 ? (() => {
+    const first = ms[0];
+    const last = ms[ms.length - 1];
+    const rows = ms.length === 1 ? [first] : [first, last];
+    const startW = first.weight;
+    return `<table>
+    <thead><tr><th>구분</th><th>측정일</th><th>키 (cm)</th><th>체중 (kg)</th><th>BMI</th><th>최초 대비 변화</th><th>메모</th></tr></thead>
     <tbody>
-      ${[...ms].reverse().map((m, i, arr) => {
-        const prev = arr[i+1];
-        const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
-        const diffPct = prev && m.weight && prev.weight ? ((m.weight - prev.weight) / prev.weight * 100).toFixed(1) : null;
+      ${rows.map((m, i) => {
+        const isLast = i === rows.length - 1 && rows.length > 1;
+        const diff = isLast && startW && m.weight ? (m.weight - startW).toFixed(1) : null;
+        const diffPct = isLast && startW && m.weight ? ((m.weight - startW) / startW * 100).toFixed(1) : null;
         const cat = bmiCat(m.bmi);
         return `<tr>
+          <td><strong style="color:${isLast ? "#3d7ebf" : "#2d6a4f"}">${isLast ? "최근" : "최초"}</strong></td>
           <td>${formatDate(m.measured_at)}</td>
           <td>${m.height || "-"}</td>
           <td><strong>${m.weight || "-"}</strong></td>
           <td>${m.bmi ? `${m.bmi} <span class="badge ${["정상"].includes(cat) ? "badge-ok" : "badge-warn"}">${cat}</span>` : "-"}</td>
-          <td>${diff ? `<span class="badge ${parseFloat(diff) < 0 ? "badge-down" : "badge-up"}">${parseFloat(diff) > 0 ? "+" : ""}${diff}kg${diffPct ? ` (${parseFloat(diffPct) > 0 ? "+" : ""}${diffPct}%)` : ""}</span>` : "-"}</td>
+          <td>${diff ? `<span class="badge ${parseFloat(diff) < 0 ? "badge-down" : "badge-up"}">${parseFloat(diff) > 0 ? "+" : ""}${diff}kg (${parseFloat(diffPct) > 0 ? "+" : ""}${diffPct}%)</span>` : "-"}</td>
           <td style="color:#9090b0">${m.memo || "-"}</td>
         </tr>`;
       }).join("")}
     </tbody>
-  </table>` : ""}
+  </table>`;
+  })() : ""}
 
   <div class="insight">
     <strong>BMI 해석 기준 (아시아인)</strong><br>
@@ -913,72 +921,49 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   </div>
   ` : ""}
 
-  <!-- 최신 인바디 수치 -->
+  <!-- 인바디 이력 비교 테이블 (처음·마지막만) -->
   ${(() => {
-    const latest = ib[ib.length - 1];
-    const prev = ib[ib.length - 2];
-    const d = latest?.parsed_data || {};
-    const p = prev?.parsed_data || {};
-    const warn = fatWarn(d.body_fat_percent, patient.gender);
-    return `
-    <div style="margin-bottom:16px;font-size:13px;font-weight:600;color:#9090b0">최근 측정: ${formatDate(latest.measured_at)}</div>
-    <div class="ib-grid">
-      <div class="ib-card">
-        <div class="ib-label">골격근량</div>
-        <div class="ib-val ${d.muscle_mass && p.muscle_mass && d.muscle_mass >= p.muscle_mass ? "ib-ok" : ""}">${d.muscle_mass || "-"} <span style="font-size:12px;font-weight:400">kg</span></div>
-        ${d.muscle_mass && p.muscle_mass ? `<div style="font-size:11px;color:${d.muscle_mass >= p.muscle_mass ? "#2d6a4f" : "#e07a5f"}">${d.muscle_mass >= p.muscle_mass ? "▲" : "▼"} ${Math.abs(d.muscle_mass - p.muscle_mass).toFixed(1)}kg 변화</div>` : ""}
-        ${d.muscle_mass && p.muscle_mass && ((parseFloat(p.muscle_mass) - parseFloat(d.muscle_mass)) / parseFloat(p.muscle_mass) * 100) >= 5 ? `<div class="ib-warn-msg">💧 수분 섭취를 늘리세요</div>` : ""}
-      </div>
-      <div class="ib-card">
-        <div class="ib-label">체지방량</div>
-        <div class="ib-val ${d.body_fat_mass && p.body_fat_mass && d.body_fat_mass < p.body_fat_mass ? "ib-ok" : ""}">${d.body_fat_mass || "-"} <span style="font-size:12px;font-weight:400">kg</span></div>
-        ${d.body_fat_mass && p.body_fat_mass ? `<div style="font-size:11px;color:${d.body_fat_mass < p.body_fat_mass ? "#2d6a4f" : "#e07a5f"}">${d.body_fat_mass < p.body_fat_mass ? "▼" : "▲"} ${Math.abs(d.body_fat_mass - p.body_fat_mass).toFixed(1)}kg 변화</div>` : ""}
-      </div>
-      <div class="ib-card">
-        <div class="ib-label">체지방률</div>
-        <div class="ib-val ${warn ? "ib-warn" : "ib-ok"}">${d.body_fat_percent || "-"} <span style="font-size:12px;font-weight:400">%</span></div>
-        ${warn ? `<div class="ib-warn-msg">${warn}</div>` : ""}
-      </div>
-      <div class="ib-card">
-        <div class="ib-label">기초대사량</div>
-        <div class="ib-val">${d.bmr || "-"} <span style="font-size:12px;font-weight:400">kcal</span></div>
-      </div>
-    </div>
-
-    <!-- 전체 이력 비교 테이블 -->
-    <table>
+    if (ib.length === 0) return "";
+    const ibRows = ib.length === 1 ? [ib[0]] : [ib[0], ib[ib.length-1]];
+    const firstIb = ib[0]?.parsed_data || {};
+    const lastIb = ib[ib.length-1]?.parsed_data || {};
+    const fields = [
+      { key: "muscle_mass", label: "골격근량 (kg)" },
+      { key: "body_fat_mass", label: "체지방량 (kg)" },
+      { key: "body_fat_percent", label: "체지방률 (%)" },
+      { key: "bmi", label: "BMI" },
+      { key: "bmr", label: "기초대사량 (kcal)" },
+      { key: "total_body_water", label: "체수분 (L)" },
+    ];
+    return `<table>
       <thead>
         <tr>
           <th>항목</th>
-          ${ib.map(r => `<th>${formatDate(r.measured_at)}</th>`).join("")}
+          <th>최초 (${formatDate(ib[0].measured_at)})</th>
+          ${ib.length > 1 ? `<th>최근 (${formatDate(ib[ib.length-1].measured_at)})</th><th>변화</th>` : ""}
         </tr>
       </thead>
       <tbody>
-        ${[
-          { key: "muscle_mass", label: "골격근량 (kg)" },
-          { key: "body_fat_mass", label: "체지방량 (kg)" },
-          { key: "body_fat_percent", label: "체지방률 (%)" },
-          { key: "bmi", label: "BMI" },
-          { key: "bmr", label: "기초대사량 (kcal)" },
-          { key: "total_body_water", label: "체수분 (L)" },
-        ].map(f => `
-          <tr>
+        ${fields.map(f => {
+          const firstVal = firstIb[f.key];
+          const lastVal = ib.length > 1 ? lastIb[f.key] : null;
+          const diff = firstVal && lastVal ? (parseFloat(lastVal) - parseFloat(firstVal)).toFixed(1) : null;
+          const isWarn = f.key === "body_fat_percent" && fatWarn(lastVal || firstVal, patient.gender);
+          const muscleDrop = f.key === "muscle_mass" && diff && ((parseFloat(firstVal) - parseFloat(lastVal)) / parseFloat(firstVal) * 100) >= 5;
+          return `<tr>
             <td><strong>${f.label}</strong></td>
-            ${ib.map((r, i) => {
-              const val = r.parsed_data?.[f.key];
-              const prevVal = ib[i-1]?.parsed_data?.[f.key];
-              const diff = val && prevVal ? (parseFloat(val) - parseFloat(prevVal)).toFixed(1) : null;
-              const isWarn = f.key === "body_fat_percent" && fatWarn(val, patient.gender);
-              return `<td style="${isWarn ? "color:#e07a5f;font-weight:600" : ""}">
-                ${val != null ? val : "-"}
-                ${diff ? `<span style="font-size:10px;margin-left:4px;color:${parseFloat(diff) < 0 ? "#2d6a4f" : "#e07a5f"}">(${parseFloat(diff) > 0 ? "+" : ""}${diff})</span>` : ""}
-              </td>`;
-            }).join("")}
-          </tr>
-        `).join("")}
+            <td>${firstVal != null ? firstVal : "-"}</td>
+            ${ib.length > 1 ? `
+            <td style="${isWarn ? "color:#e07a5f;font-weight:600" : ""}">
+              ${lastVal != null ? lastVal : "-"}
+              ${muscleDrop ? `<div style="font-size:10px;color:#e07a5f;font-weight:700">💧 수분 섭취를 늘리세요</div>` : ""}
+            </td>
+            <td>${diff ? `<span style="font-size:11px;font-weight:600;color:${parseFloat(diff) < 0 ? "#2d6a4f" : "#e07a5f"}">${parseFloat(diff) > 0 ? "+" : ""}${diff}</span>` : "-"}</td>
+            ` : ""}
+          </tr>`;
+        }).join("")}
       </tbody>
-    </table>
-    `;
+    </table>`;
   })()}
 
   <div class="insight insight-warn" style="margin-top:16px">
