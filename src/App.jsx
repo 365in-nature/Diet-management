@@ -1777,6 +1777,25 @@ function PrescriptionTab({ patient, currentUser }) {
     load();
   };
 
+  const deletePkg = async (pkgId) => {
+    if (!window.confirm("이 패키지를 삭제하시겠습니까?
+삭제 후 종료일이 자동으로 재계산됩니다.")) return;
+    await supabase.from("packages").delete().eq("id", pkgId);
+    // 남은 패키지로 종료일 재계산
+    const remaining = pkgs.filter(p => p.id !== pkgId);
+    if (remaining.length > 0) {
+      const sorted = [...remaining].sort((a,b) => a.start_date.localeCompare(b.start_date));
+      const firstStart = sorted[0].start_date;
+      const totalDays = remaining.reduce((s, p) => s + Number(p.package_months) * 30, 0);
+      const newEndDate = addDays(firstStart, totalDays);
+      // 모든 남은 패키지의 end_date 업데이트
+      await Promise.all(remaining.map(p =>
+        supabase.from("packages").update({ end_date: newEndDate }).eq("id", p.id)
+      ));
+    }
+    load();
+  };
+
   const saveRx = async () => {
     if (!pkgs || pkgs.length === 0) { alert("먼저 패키지를 등록해주세요."); return; }
     if (!rxForm.prescribed_at) { alert("처방일을 입력해주세요."); return; }
@@ -1919,15 +1938,25 @@ function PrescriptionTab({ patient, currentUser }) {
             <strong>{totalMonths}개월 ({totalDays}일)</strong>
           </div>
         </div>
-        {pkgs.length > 1 && (
-          <div style={{marginTop:8, fontSize:12, color:"var(--ink-muted)"}}>
-            {pkgs.map((p, i) => (
-              <span key={p.id} style={{marginRight:12}}>
-                {i === 0 ? "기본" : `연장 ${i}`}: {formatDate(p.start_date)} · {p.package_months}개월
+        <div style={{marginTop:12, display:"flex", flexDirection:"column", gap:6}}>
+          {pkgs.map((p, i) => (
+            <div key={p.id} style={{display:"flex", alignItems:"center", gap:10, fontSize:13, background:"var(--surface2)", borderRadius:8, padding:"8px 12px", border:"1px solid var(--border)"}}>
+              <span style={{fontWeight:700, color:"var(--ink-light)", minWidth:40}}>
+                {i === 0 ? "기본" : `연장 ${i}`}
               </span>
-            ))}
-          </div>
-        )}
+              <span style={{color:"var(--ink-muted)"}}>시작일</span>
+              <strong>{formatDate(p.start_date)}</strong>
+              <span style={{color:"var(--ink-muted)"}}>·</span>
+              <strong>{p.package_months}개월</strong>
+              <button
+                className="btn btn-xs btn-danger"
+                style={{marginLeft:"auto"}}
+                onClick={() => deletePkg(p.id)}>
+                삭제
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
