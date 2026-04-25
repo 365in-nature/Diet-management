@@ -374,25 +374,55 @@ function PatientListPage({ onSelectPatient, currentUser }) {
   const loadPatients = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase.from("patients").select("*, goals(*), packages(*), measurements(*)").order("registered_at", { ascending: false });
-    setPatients(data || []);
+    const patientList = data || [];
 
-    // 오늘 해피콜 알림 확인
+    // 해피콜 알림 확인 (happycall_logs 포함)
     const { data: prescriptions } = await supabase.from("prescriptions")
-      .select("*, prescription_updates(*)")
+      .select("*, prescription_updates(*), happycall_logs(*)")
       .eq("is_completed", false);
 
+    // 프리미엄 관리 방문 데이터
+    const { data: allVisits } = await supabase.from("visits").select("patient_id, visited_at, treatment_types").order("visited_at", { ascending: false });
+
     const alertMap = {};
+    const premiumAlertSet = new Set();
+
     (prescriptions || []).forEach(p => {
       const latestUpdate = p.prescription_updates?.sort((a,b) => b.updated_at.localeCompare(a.updated_at))[0];
       const reservationDate = latestUpdate ? latestUpdate.new_reservation_happycall_date : p.reservation_happycall_date;
       const arrivalDate = p.arrival_happycall_date;
-      const type = p.medicine_type; // 'tang' or 'hwan'
-
+      const type = p.medicine_type;
+      const arrivalDone = p.happycall_logs?.find(h => h.call_type === "arrival" && h.is_done);
+      const reservationDone = p.happycall_logs?.find(h => h.call_type === "reservation" && h.is_done);
       if (!alertMap[p.patient_id]) alertMap[p.patient_id] = [];
-      if (isTodayOrPast(arrivalDate)) alertMap[p.patient_id].push({ kind: "도착", type });
-      if (isTodayOrPast(reservationDate)) alertMap[p.patient_id].push({ kind: "예약", type });
+      if (isTodayOrPast(arrivalDate) && !arrivalDone) alertMap[p.patient_id].push({ kind: "도착", type });
+      if (isTodayOrPast(reservationDate) && !reservationDone) alertMap[p.patient_id].push({ kind: "예약", type });
     });
+
+    // 프리미엄 관리 13일 초과 체크
+    const premiumByPatient = {};
+    (allVisits || []).forEach(v => {
+      if ((v.treatment_types || []).includes("premium")) {
+        if (!premiumByPatient[v.patient_id] || v.visited_at > premiumByPatient[v.patient_id]) {
+          premiumByPatient[v.patient_id] = v.visited_at;
+        }
+      }
+    });
+    Object.entries(premiumByPatient).forEach(([pid, lastDate]) => {
+      const diff = Math.floor((new Date(today()) - new Date(lastDate)) / (1000*60*60*24));
+      if (diff > 13) premiumAlertSet.add(pid);
+    });
+
     setAlerts(alertMap);
+
+    // 정렬: 해피콜 대상자 → 프리미엄 알림 → 나머지
+    const sorted = [...patientList].sort((a, b) => {
+      const aScore = (alertMap[a.id] || []).length > 0 ? 0 : premiumAlertSet.has(a.id) ? 1 : 2;
+      const bScore = (alertMap[b.id] || []).length > 0 ? 0 : premiumAlertSet.has(b.id) ? 1 : 2;
+      return aScore - bScore;
+    });
+
+    setPatients(sorted.map(p => ({ ...p, _premiumAlert: premiumAlertSet.has(p.id) })));
     setLoading(false);
   }, []);
 
@@ -442,6 +472,9 @@ function PatientListPage({ onSelectPatient, currentUser }) {
                         {a.kind === "도착" ? "📦" : "📅"} {a.type === "tang" ? "탕약" : "환약"} {a.kind} 해피콜
                       </span>
                     ))}
+                    {p._premiumAlert && todayAlerts.length === 0 && (
+                      <span className="badge badge-warn">🏥 프리미엄 재내원 필요</span>
+                    )}
                     <button className="btn btn-xs btn-danger" onClick={async e => {
                       e.stopPropagation();
                       if (!window.confirm(`${p.name} 환자를 삭제하시겠습니까?\n모든 데이터(처방, 측정값 등)가 함께 삭제됩니다.`)) return;
@@ -775,18 +808,19 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
 
   ${ms.length > 0 ? `
   <table>
-    <thead><tr><th>측정일</th><th>키 (cm)</th><th>체중 (kg)</th><th>BMI</th><th>변화</th><th>메모</th></tr></thead>
+    <thead><tr><th>측정일</th><th>키 (cm)</th><th>체중 (kg)</th><th>BMI</th><th>변화 (kg / %)</th><th>메모</th></tr></thead>
     <tbody>
       ${[...ms].reverse().map((m, i, arr) => {
         const prev = arr[i+1];
         const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
+        const diffPct = prev && m.weight && prev.weight ? ((m.weight - prev.weight) / prev.weight * 100).toFixed(1) : null;
         const cat = bmiCat(m.bmi);
         return `<tr>
           <td>${formatDate(m.measured_at)}</td>
           <td>${m.height || "-"}</td>
           <td><strong>${m.weight || "-"}</strong></td>
           <td>${m.bmi ? `${m.bmi} <span class="badge ${["정상"].includes(cat) ? "badge-ok" : "badge-warn"}">${cat}</span>` : "-"}</td>
-          <td>${diff ? `<span class="badge ${parseFloat(diff) < 0 ? "badge-down" : "badge-up"}">${parseFloat(diff) > 0 ? "+" : ""}${diff}</span>` : "-"}</td>
+          <td>${diff ? `<span class="badge ${parseFloat(diff) < 0 ? "badge-down" : "badge-up"}">${parseFloat(diff) > 0 ? "+" : ""}${diff}kg${diffPct ? ` (${parseFloat(diffPct) > 0 ? "+" : ""}${diffPct}%)` : ""}</span>` : "-"}</td>
           <td style="color:#9090b0">${m.memo || "-"}</td>
         </tr>`;
       }).join("")}
@@ -810,6 +844,17 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   </div>
 
   ${ib.length === 0 ? '<div style="color:#9090b0;font-size:13px;padding:16px 0">인바디 측정 기록이 없습니다</div>' : `
+  ${(() => {
+    if (ib.length < 2) return "";
+    const latestM = ib[ib.length-1]?.parsed_data?.muscle_mass;
+    const prevM = ib[ib.length-2]?.parsed_data?.muscle_mass;
+    if (!latestM || !prevM) return "";
+    const drop = (parseFloat(prevM) - parseFloat(latestM)) / parseFloat(prevM) * 100;
+    if (drop < 5) return "";
+    return String.raw`<div style="background:#fff3e0;border:2px solid #ff9800;border-radius:8px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:12px"><span style="font-size:22px">💧</span><div><div style="font-weight:700;color:#e65100;font-size:14px;margin-bottom:4px">수분 섭취를 늘리세요</div><div style="font-size:12px;color:#bf360c">골격근량이 이전 측정 대비 ` + drop.toFixed(1) + `% 감소하였습니다 (` + prevM + `kg → ` + latestM + `kg). 충분한 수분 섭취와 단백질 보충이 필요합니다.</div></div></div>`;
+  })()}
+
+  
 
   ${ib.length >= 2 ? `
   <div class="chart-block">
@@ -840,6 +885,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
         <div class="ib-label">골격근량</div>
         <div class="ib-val ${d.muscle_mass && p.muscle_mass && d.muscle_mass >= p.muscle_mass ? "ib-ok" : ""}">${d.muscle_mass || "-"} <span style="font-size:12px;font-weight:400">kg</span></div>
         ${d.muscle_mass && p.muscle_mass ? `<div style="font-size:11px;color:${d.muscle_mass >= p.muscle_mass ? "#2d6a4f" : "#e07a5f"}">${d.muscle_mass >= p.muscle_mass ? "▲" : "▼"} ${Math.abs(d.muscle_mass - p.muscle_mass).toFixed(1)}kg 변화</div>` : ""}
+        ${d.muscle_mass && p.muscle_mass && ((parseFloat(p.muscle_mass) - parseFloat(d.muscle_mass)) / parseFloat(p.muscle_mass) * 100) >= 5 ? `<div class="ib-warn-msg">💧 수분 섭취를 늘리세요</div>` : ""}
       </div>
       <div class="ib-card">
         <div class="ib-label">체지방량</div>
@@ -981,6 +1027,94 @@ function bmiCategory(bmi) {
   return { label: "비만", color: "var(--warn)" };
 }
 
+
+// =============================================
+// WEIGHT PROJECTION GRAPH (목표 체중 예상 기간)
+// =============================================
+function WeightProjectionChart({ currentWeight, targetWeight, bmi }) {
+  if (!currentWeight || !targetWeight || !bmi) return null;
+  const cw = parseFloat(currentWeight);
+  const tw = parseFloat(targetWeight);
+  const b = parseFloat(bmi);
+  if (cw <= tw) return null; // 이미 목표 달성
+
+  // BMI 기준 월별 감량률 범위
+  let minRate, maxRate, category;
+  if (b >= 25) { minRate = 0.08; maxRate = 0.10; category = "비만"; }
+  else if (b >= 23) { minRate = 0.06; maxRate = 0.08; category = "과체중"; }
+  else { minRate = 0.04; maxRate = 0.06; category = "정상체중"; }
+
+  // 월별 예상 체중 계산 (최소/최대 감량률)
+  const rows = [];
+  let wMin = cw, wMax = cw;
+  for (let m = 0; m <= 24; m++) {
+    rows.push({ month: m, min: parseFloat(wMin.toFixed(1)), max: parseFloat(wMax.toFixed(1)) });
+    if (wMin <= tw && wMax <= tw) break;
+    wMin = Math.max(tw, wMin * (1 - maxRate));
+    wMax = Math.max(tw, wMax * (1 - minRate));
+  }
+
+  const reachMin = rows.find(r => r.min <= tw)?.month;
+  const reachMax = rows.find(r => r.max <= tw)?.month;
+
+  // SVG chart
+  const display = rows.slice(0, Math.min(rows.length, 13));
+  const allVals = display.flatMap(r => [r.min, r.max]);
+  const minV = Math.min(...allVals) - 1;
+  const maxV = Math.max(...allVals) + 1;
+  const W = 500, H = 160, PX = 40, PY = 20;
+  const px = (i) => PX + (i / (display.length - 1)) * (W - PX * 2);
+  const py = (v) => PY + ((maxV - v) / (maxV - minV)) * (H - PY * 2);
+
+  const pathMax = display.map((r, i) => `${i === 0 ? "M" : "L"} ${px(i)} ${py(r.max)}`).join(" ");
+  const pathMin = display.map((r, i) => `${i === 0 ? "M" : "L"} ${px(i)} ${py(r.min)}`).join(" ");
+  const areaPath = pathMin + " " + [...display].reverse().map((r, i, arr) => `${i === 0 ? "L" : "L"} ${px(arr.length - 1 - i)} ${py(r.max)}`).join(" ") + " Z";
+  const targetY = py(tw);
+
+  return (
+    <div style={{marginTop:16, padding:16, background:"var(--surface2)", borderRadius:10, border:"1px solid var(--border)"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
+        <div style={{fontSize:13, fontWeight:700}}>📉 목표 체중 도달 예상 기간 ({category})</div>
+        <div style={{fontSize:12, color:"var(--ink-muted)"}}>월 {Math.round(minRate*100)}~{Math.round(maxRate*100)}% 감량 기준</div>
+      </div>
+      <div style={{fontSize:12, color:"var(--accent)", fontWeight:600, marginBottom:10}}>
+        예상 기간: <strong>{reachMin}~{reachMax}개월</strong> 후 목표 체중 {tw}kg 도달
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block", minWidth:300}}>
+          <defs>
+            <linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.15"/>
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02"/>
+            </linearGradient>
+          </defs>
+          {/* target line */}
+          <line x1={PX} y1={targetY} x2={W-PX} y2={targetY} stroke="var(--warn)" strokeWidth="1.5" strokeDasharray="6,4"/>
+          <text x={W-PX+4} y={targetY+4} fontSize="9" fill="var(--warn)">{tw}kg</text>
+          {/* area */}
+          <path d={areaPath} fill="url(#projGrad)"/>
+          {/* lines */}
+          <path d={pathMax} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeDasharray="5,3"/>
+          <path d={pathMin} fill="none" stroke="#2d6a4f" strokeWidth="2" strokeLinecap="round"/>
+          {/* points & labels */}
+          {display.map((r, i) => (
+            <g key={i}>
+              <circle cx={px(i)} cy={py(r.min)} r="3" fill="#2d6a4f" stroke="#fff" strokeWidth="1.5"/>
+              <text x={px(i)} y={H-4} textAnchor="middle" fontSize="9" fill="#9090b0">{r.month}M</text>
+              {i % 2 === 0 && <text x={px(i)} y={py(r.min)-7} textAnchor="middle" fontSize="9" fill="#2d6a4f">{r.min}</text>}
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div style={{display:"flex", gap:16, fontSize:11, color:"var(--ink-muted)", marginTop:6}}>
+        <span><span style={{color:"#2d6a4f", fontWeight:700}}>—</span> 최대 감량 시나리오 (월 {Math.round(maxRate*100)}%)</span>
+        <span><span style={{color:"var(--accent)", fontWeight:700}}>- -</span> 최소 감량 시나리오 (월 {Math.round(minRate*100)}%)</span>
+        <span><span style={{color:"var(--warn)", fontWeight:700}}>- -</span> 목표 체중</span>
+      </div>
+    </div>
+  );
+}
+
 function MeasurementTab({ patient, currentUser }) {
   const [measurements, setMeasurements] = useState([]);
   const [goal, setGoal] = useState(null);
@@ -1043,11 +1177,20 @@ function MeasurementTab({ patient, currentUser }) {
           </button>
         </div>
         {goal ? (
-          <div style={{display:"flex", gap:24, flexWrap:"wrap"}}>
-            <div><div className="form-label">목표 체중</div><div style={{fontSize:20,fontWeight:700,color:"var(--accent)"}}>{goal.target_weight} kg</div></div>
-            <div><div className="form-label">목표 기간</div><div style={{fontSize:20,fontWeight:700}}>{goal.target_period_weeks}주</div></div>
-            <div><div className="form-label">시작일</div><div style={{fontSize:14,fontWeight:600}}>{formatDate(goal.start_date)}</div></div>
-            {lost && <div><div className="form-label">현재까지 감량</div><div style={{fontSize:20,fontWeight:700,color:"var(--info)"}}>-{lost} kg</div></div>}
+          <div>
+            <div style={{display:"flex", gap:24, flexWrap:"wrap"}}>
+              <div><div className="form-label">목표 체중</div><div style={{fontSize:20,fontWeight:700,color:"var(--accent)"}}>{goal.target_weight} kg</div></div>
+              <div><div className="form-label">목표 기간</div><div style={{fontSize:20,fontWeight:700}}>{goal.target_period_weeks}주</div></div>
+              <div><div className="form-label">시작일</div><div style={{fontSize:14,fontWeight:600}}>{formatDate(goal.start_date)}</div></div>
+              {lost && <div><div className="form-label">현재까지 감량</div><div style={{fontSize:20,fontWeight:700,color:"var(--info)"}}>-{lost} kg</div></div>}
+            </div>
+            {!showGoalForm && latestWeight && goal.target_weight && (
+              <WeightProjectionChart
+                currentWeight={latestWeight}
+                targetWeight={goal.target_weight}
+                bmi={calcBMI(latestWeight, measurements[measurements.length-1]?.height || measurements[0]?.height)}
+              />
+            )}
           </div>
         ) : <div className="empty" style={{padding:16}}>목표를 등록해주세요</div>}
         {showGoalForm && (
@@ -1066,6 +1209,14 @@ function MeasurementTab({ patient, currentUser }) {
                 <input className="form-input" type="date" value={gForm.start_date} onChange={e => setGForm({...gForm, start_date: e.target.value})} />
               </div>
             </div>
+            {/* 실시간 목표 체중 예측 그래프 */}
+            {gForm.target_weight && latestWeight && (
+              <WeightProjectionChart
+                currentWeight={latestWeight}
+                targetWeight={gForm.target_weight}
+                bmi={calcBMI(latestWeight, measurements[measurements.length-1]?.height || measurements[0]?.height)}
+              />
+            )}
             <div className="form-actions">
               <button className="btn btn-secondary btn-sm" onClick={() => setShowGoalForm(false)}>취소</button>
               <button className="btn btn-primary btn-sm" onClick={saveGoal}>저장</button>
@@ -1119,27 +1270,46 @@ function MeasurementTab({ patient, currentUser }) {
             </div>
           </div>
         )}
-        {measurements.length >= 2 && (
-          <div style={{marginBottom:16}}>
-            <div className="form-label" style={{marginBottom:8}}>체중 추이 (kg)</div>
-            <LineChart data={measurements} valueKey="weight" color="var(--accent)" />
-            {measurements.some(m => m.bmi) && (
-              <>
-                <div className="form-label" style={{margin:"16px 0 8px"}}>BMI 추이</div>
-                <LineChart data={measurements} valueKey="bmi" color="var(--gold)" />
-              </>
-            )}
-          </div>
-        )}
+        {measurements.length >= 2 && (() => {
+          // Flat 구간 감지: 15일 이상 체중 변화 없는 구간
+          const sorted = [...measurements].sort((a,b) => a.measured_at.localeCompare(b.measured_at));
+          let flatAlert = null;
+          for (let i = 1; i < sorted.length; i++) {
+            const prev = sorted[i-1], cur = sorted[i];
+            if (prev.weight && cur.weight && Math.abs(parseFloat(cur.weight) - parseFloat(prev.weight)) < 0.5) {
+              const days = Math.floor((new Date(cur.measured_at) - new Date(prev.measured_at)) / (1000*60*60*24));
+              if (days >= 15) { flatAlert = { from: prev.measured_at, to: cur.measured_at, days }; }
+            }
+          }
+          return (
+            <div style={{marginBottom:16}}>
+              {flatAlert && (
+                <div style={{background:"#fff8e1", border:"1.5px solid #f9a825", borderRadius:8, padding:"10px 14px", marginBottom:12, fontSize:13, color:"#7a5f00", display:"flex", alignItems:"center", gap:8}}>
+                  <span style={{fontSize:16}}>📊</span>
+                  <span><strong>Flat 구간 감지 (Set Point 조정 요망)</strong> — {formatDate(flatAlert.from)} ~ {formatDate(flatAlert.to)} ({flatAlert.days}일간 체중 변화 없음)</span>
+                </div>
+              )}
+              <div className="form-label" style={{marginBottom:8}}>체중 추이 (kg)</div>
+              <LineChart data={measurements} valueKey="weight" color="var(--accent)" />
+              {measurements.some(m => m.bmi) && (
+                <>
+                  <div className="form-label" style={{margin:"16px 0 8px"}}>BMI 추이</div>
+                  <LineChart data={measurements} valueKey="bmi" color="var(--gold)" />
+                </>
+              )}
+            </div>
+          );
+        })()}
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>측정일</th><th>키(cm)</th><th>체중(kg)</th><th>BMI</th><th>변화</th><th>메모</th><th></th></tr>
+              <tr><th>측정일</th><th>키(cm)</th><th>체중(kg)</th><th>BMI</th><th>변화(kg)</th><th>변화(%)</th><th>메모</th><th></th></tr>
             </thead>
             <tbody>
               {[...measurements].reverse().map((m, i, arr) => {
                 const prev = arr[i+1];
                 const diff = prev && m.weight && prev.weight ? (m.weight - prev.weight).toFixed(1) : null;
+                const diffPct = prev && m.weight && prev.weight ? ((m.weight - prev.weight) / prev.weight * 100).toFixed(1) : null;
                 const cat = bmiCategory(m.bmi);
                 return (
                   <tr key={m.id}>
@@ -1147,7 +1317,8 @@ function MeasurementTab({ patient, currentUser }) {
                     <td>{m.height || "-"}</td>
                     <td><strong>{m.weight || "-"}</strong></td>
                     <td>{m.bmi ? (<span style={{display:"inline-flex",alignItems:"center",gap:4}}>{m.bmi}{cat && <span style={{fontSize:10,fontWeight:700,color:cat.color,background:cat.color+"20",padding:"1px 6px",borderRadius:20}}>{cat.label}</span>}</span>) : "-"}</td>
-                    <td>{diff ? <span style={{color: diff < 0 ? "var(--accent)" : "var(--warn)", fontWeight:600}}>{diff > 0 ? "+" : ""}{diff}</span> : "-"}</td>
+                    <td>{diff ? <span style={{color: parseFloat(diff) < 0 ? "var(--accent)" : "var(--warn)", fontWeight:600}}>{parseFloat(diff) > 0 ? "+" : ""}{diff}</span> : "-"}</td>
+                    <td>{diffPct ? <span style={{color: parseFloat(diffPct) < 0 ? "var(--accent)" : "var(--warn)", fontWeight:600, fontSize:12}}>{parseFloat(diffPct) > 0 ? "+" : ""}{diffPct}%</span> : "-"}</td>
                     <td style={{maxWidth:150, fontSize:12, color:"var(--ink-muted)"}}>{m.memo || "-"}</td>
                     <td><button className="btn btn-xs btn-danger" onClick={async () => {
                       if (!window.confirm("이 측정 기록을 삭제하시겠습니까?")) return;
@@ -1463,10 +1634,14 @@ function InbodyTab({ patient, currentUser }) {
                           const prev = records[i-1]?.parsed_data?.[f.key];
                           const diff = val && prev ? (parseFloat(val) - parseFloat(prev)).toFixed(1) : null;
                           const isBad = f.key === "body_fat_percent" && bodyFatAlert(val, patient.gender);
+                          const muscleDrop = f.key === "muscle_mass" && val && prev
+                            ? ((parseFloat(prev) - parseFloat(val)) / parseFloat(prev) * 100) >= 5
+                            : false;
                           return (
-                            <td key={r.id} style={{color: isBad ? "var(--warn)" : "inherit"}}>
+                            <td key={r.id} style={{color: isBad ? "var(--warn)" : muscleDrop ? "var(--warn)" : "inherit"}}>
                               {val != null ? `${val} ${f.unit}` : "-"}
                               {diff && <span style={{fontSize:11, marginLeft:4, color: parseFloat(diff) < 0 ? "var(--accent)" : "var(--warn)"}}>({parseFloat(diff) > 0 ? "+" : ""}{diff})</span>}
+                              {muscleDrop && <div style={{fontSize:10, color:"var(--warn)", fontWeight:700, marginTop:2}}>💧 수분 섭취를 늘리세요</div>}
                             </td>
                           );
                         })}
@@ -1626,11 +1801,37 @@ function PrescriptionTab({ patient, currentUser }) {
     if (existing) {
       await supabase.from("happycall_logs").update({ is_done: !existing.is_done }).eq("id", existing.id);
     } else {
-      const memo = window.prompt("해피콜 메모 (선택사항):");
       await supabase.from("happycall_logs").insert([{
         prescription_id: rxId,
         call_type: callType,
         is_done: true,
+        memo: null,
+        no_answer_count: 0,
+      }]);
+    }
+    load();
+  };
+
+  const recordNoAnswer = async (rxId, callType, existing) => {
+    if (existing) {
+      const newCount = (existing.no_answer_count || 0) + 1;
+      const memo = window.prompt(
+        `미응답 횟수: ${newCount}회\n메모를 입력하세요 (예: 오후 전화 요망, 문자 연락 요망):`,
+        existing.memo || ""
+      );
+      await supabase.from("happycall_logs").update({
+        no_answer_count: newCount,
+        memo: memo !== null ? memo : existing.memo,
+      }).eq("id", existing.id);
+    } else {
+      const memo = window.prompt(
+        "미응답 1회 기록\n메모를 입력하세요 (예: 오후 전화 요망, 문자 연락 요망):"
+      );
+      await supabase.from("happycall_logs").insert([{
+        prescription_id: rxId,
+        call_type: callType,
+        is_done: false,
+        no_answer_count: 1,
         memo: memo || null,
       }]);
     }
@@ -1719,32 +1920,54 @@ function PrescriptionTab({ patient, currentUser }) {
         <div className={`happycall-card ${arrivalHC?.is_done ? "happycall-done" : "happycall-arrival"}`}>
           <div className="happycall-header">
             <span className="happycall-type">📦 도착 해피콜</span>
-            <div style={{display:"flex", gap:8, alignItems:"center"}}>
+            <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
               <span className="happycall-date">{formatDate(rx.arrival_happycall_date)}</span>
               {arrivalToday && !arrivalHC?.is_done && <span className="badge badge-info">오늘!</span>}
+              {(arrivalHC?.no_answer_count > 0) && (
+                <span className="badge badge-warn">미응답 {arrivalHC.no_answer_count}회</span>
+              )}
+              <button className="btn btn-xs btn-secondary"
+                onClick={() => recordNoAnswer(rx.id, "arrival", arrivalHC)}>
+                📵 미응답
+              </button>
               <button className={`btn btn-xs ${arrivalHC?.is_done ? "btn-secondary" : "btn-primary"}`}
                 onClick={() => toggleHappycall(rx.id, "arrival", arrivalHC)}>
                 {arrivalHC?.is_done ? "✓ 완료" : "완료 처리"}
               </button>
             </div>
           </div>
-          {arrivalHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {arrivalHC.memo}</div>}
+          {arrivalHC?.memo && (
+            <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:4}}>
+              💬 {arrivalHC.memo}
+            </div>
+          )}
         </div>
 
         {/* 예약 해피콜 */}
         <div className={`happycall-card ${reservationHC?.is_done ? "happycall-done" : "happycall-reservation"}`}>
           <div className="happycall-header">
             <span className="happycall-type">📅 예약 해피콜</span>
-            <div style={{display:"flex", gap:8, alignItems:"center"}}>
+            <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
               <span className="happycall-date">{formatDate(reservationDate)}</span>
               {reservationToday && !reservationHC?.is_done && <span className="badge badge-warn">오늘!</span>}
+              {(reservationHC?.no_answer_count > 0) && (
+                <span className="badge badge-warn">미응답 {reservationHC.no_answer_count}회</span>
+              )}
+              <button className="btn btn-xs btn-secondary"
+                onClick={() => recordNoAnswer(rx.id, "reservation", reservationHC)}>
+                📵 미응답
+              </button>
               <button className={`btn btn-xs ${reservationHC?.is_done ? "btn-secondary" : "btn-danger"}`}
                 onClick={() => toggleHappycall(rx.id, "reservation", reservationHC)}>
                 {reservationHC?.is_done ? "✓ 완료" : "완료 처리"}
               </button>
             </div>
           </div>
-          {reservationHC?.memo && <div style={{fontSize:12, color:"var(--ink-muted)"}}>💬 {reservationHC.memo}</div>}
+          {reservationHC?.memo && (
+            <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:4}}>
+              💬 {reservationHC.memo}
+            </div>
+          )}
 
           {/* 잔여 일수 업데이트 */}
           {/* 잔여 일수 업데이트 - 항상 표시 */}
