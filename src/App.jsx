@@ -783,8 +783,14 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
 
   @media print {
     @page {
-      margin: 15mm 12mm 20mm;
+      margin: 0;
       size: A4 portrait;
+    }
+    @page :first {
+      margin: 0;
+    }
+    @page :not(:first) {
+      margin: 15mm 12mm 20mm;
       @bottom-center {
         content: counter(page) " / " counter(pages);
         font-family: 'Noto Sans KR', sans-serif;
@@ -794,10 +800,73 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
     }
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 0; }
     .no-break { page-break-inside: avoid; break-inside: avoid; }
+    .cover-page { page-break-after: always; break-after: page; }
+    /* 빈 페이지 방지 */
+    .body { orphans: 4; widows: 4; }
+    .section-block:last-child { page-break-after: avoid; break-after: avoid; }
+    .footer { page-break-after: avoid; break-after: avoid; }
   }
 </style>
 </head>
 <body>
+
+<!-- COVER PAGE -->
+<div class="cover-page" style="width:100%;height:100vh;min-height:297mm;background:linear-gradient(145deg,#0f2027 0%,#1a3a2a 50%,#0f2027 100%);display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;page-break-after:always;">
+
+  <!-- 배경 장식 원 -->
+  <div style="position:absolute;top:-80px;right:-80px;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(82,183,136,0.18) 0%,transparent 70%);"></div>
+  <div style="position:absolute;bottom:-120px;left:-60px;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(45,106,79,0.15) 0%,transparent 70%);"></div>
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:600px;height:600px;border-radius:50%;border:1px solid rgba(82,183,136,0.08);"></div>
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:450px;height:450px;border-radius:50%;border:1px solid rgba(82,183,136,0.06);"></div>
+
+  <!-- 상단 로고 영역 -->
+  <div style="padding:48px 56px 0;position:relative;z-index:1;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:0;">
+      <div style="width:36px;height:36px;border-radius:50%;background:rgba(82,183,136,0.2);border:1.5px solid #52b788;display:flex;align-items:center;justify-content:center;font-size:16px;">🌿</div>
+      <div style="font-size:13px;letter-spacing:4px;color:#52b788;font-weight:600;text-transform:uppercase;">韓醫 Diet</div>
+    </div>
+    <div style="height:1px;background:linear-gradient(90deg,rgba(82,183,136,0.4),transparent);margin-top:20px;"></div>
+  </div>
+
+  <!-- 중앙 메인 콘텐츠 -->
+  <div style="padding:0 56px;position:relative;z-index:1;text-align:left;">
+    <div style="font-size:11px;letter-spacing:3px;color:rgba(82,183,136,0.7);margin-bottom:20px;text-transform:uppercase;">건강관리 리포트 · Health Report</div>
+
+    <div style="font-size:58px;font-weight:700;color:#ffffff;line-height:1.1;margin-bottom:8px;letter-spacing:-1px;">
+      ${patient.name}
+      <span style="font-size:28px;font-weight:300;color:rgba(255,255,255,0.6);">님</span>
+    </div>
+    <div style="font-size:22px;font-weight:300;color:rgba(255,255,255,0.7);margin-bottom:40px;letter-spacing:1px;">다이어트 관리 기록</div>
+
+    <!-- 구분선 -->
+    <div style="width:60px;height:3px;background:linear-gradient(90deg,#52b788,#2d6a4f);border-radius:2px;margin-bottom:40px;"></div>
+
+    <!-- 환자 정보 카드 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;max-width:520px;">
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(82,183,136,0.2);border-radius:12px;padding:16px 20px;">
+        <div style="font-size:9px;letter-spacing:2px;color:rgba(82,183,136,0.7);margin-bottom:6px;text-transform:uppercase;">차트번호</div>
+        <div style="font-size:16px;font-weight:700;color:#fff;">#${patient.chart_number}</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(82,183,136,0.2);border-radius:12px;padding:16px 20px;">
+        <div style="font-size:9px;letter-spacing:2px;color:rgba(82,183,136,0.7);margin-bottom:6px;text-transform:uppercase;">성별</div>
+        <div style="font-size:16px;font-weight:700;color:#fff;">${patient.gender === "female" ? "여성" : "남성"}</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(82,183,136,0.2);border-radius:12px;padding:16px 20px;">
+        <div style="font-size:9px;letter-spacing:2px;color:rgba(82,183,136,0.7);margin-bottom:6px;text-transform:uppercase;">${goal ? "시작일" : "출력일"}</div>
+        <div style="font-size:13px;font-weight:700;color:#fff;">${goal ? formatDate(goal.start_date) : formatDate(today())}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 하단 푸터 -->
+  <div style="padding:0 56px 40px;position:relative;z-index:1;">
+    <div style="height:1px;background:linear-gradient(90deg,rgba(82,183,136,0.3),transparent);margin-bottom:20px;"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:1px;">출력일 · ${formatDate(today())}</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:1px;">Confidential · 개인 건강정보</div>
+    </div>
+  </div>
+</div>
 
 <div class="body">
 <div style="border-bottom:2px solid #1a1a2e;padding-bottom:12px;margin-bottom:28px;display:flex;justify-content:space-between;align-items:flex-end;">
@@ -994,7 +1063,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
 
 </div><!-- /body -->
 
-<div class="footer">
+<div class="footer" style="page-break-before:avoid;break-before:avoid;">
   <span>韓醫 Diet 건강관리 리포트</span>
   <span>${patient.name} 님 · 출력일 ${formatDate(today())}</span>
 </div>
