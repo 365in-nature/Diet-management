@@ -650,7 +650,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
         if (values.length < 2) return `<div style="color:#9090b0;font-size:12px;padding:20px 0">데이터가 부족합니다</div>`;
         const min = Math.min(...values) - 1;
         const max = Math.max(...values) + 1;
-        const w = 500, h = 110, padX = 50, padY = showPctChange ? 30 : 16;
+        const w = 500, h = 160, padX = 50, padY = showPctChange ? 36 : 20;
         const firstVal = values[0];
         const pts = data.filter(d => !isNaN(parseFloat(d[valueKey]))).map((d, i, arr) => ({
           x: padX + (i / (arr.length - 1)) * (w - padX * 2),
@@ -752,8 +752,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   /* CHART */
   .chart-block { margin-bottom: 10px; }
   .chart-label { font-size: 10px; font-weight: 600; color: #4a4a6a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-  .chart-wrap { background: #faf9f6; border-radius: 8px; padding: 6px 10px; border: 1px solid #e8e6e0; height: 90px; overflow: hidden; }
-  .chart-wrap svg { display: block; width: 100%; height: 90px; }
+  .chart-wrap { background: #faf9f6; border-radius: 10px; padding: 16px; border: 1px solid #e8e6e0; }
   .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
 
   /* TABLE */
@@ -919,12 +918,12 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   <div class="chart-row">
     <div class="chart-block">
       <div class="chart-label">체중 추이 (kg)</div>
-      <div class="chart-wrap" style="height:225px;">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg", true)}</div>
+      <div class="chart-wrap">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg", true)}</div>
     </div>
     ${ms.some(m => m.bmi) ? `
     <div class="chart-block">
       <div class="chart-label">BMI 추이</div>
-      <div class="chart-wrap" style="height:225px;">${makeSVG(ms, "bmi", "#c9a94e", "BMI", "")}</div>
+      <div class="chart-wrap">${makeSVG(ms, "bmi", "#c9a94e", "BMI", "")}</div>
     </div>` : "<div></div>"}
   </div>
   ` : '<div style="color:#9090b0;font-size:12px;padding:8px 0">체형 측정 데이터가 2개 이상이어야 그래프가 표시됩니다</div>'}
@@ -989,15 +988,15 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   <div class="chart-row" style="grid-template-columns:1fr 1fr 1fr;">
     <div class="chart-block">
       <div class="chart-label">골격근량 추이 (kg)</div>
-      <div class="chart-wrap" style="height:180px;">${makeSVG(ib.map(r => ({measured_at: r.measured_at, muscle_mass: r.parsed_data?.muscle_mass})), "muscle_mass", "#2d6a4f", "골격근량", "kg")}</div>
+      <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, muscle_mass: r.parsed_data?.muscle_mass})), "muscle_mass", "#2d6a4f", "골격근량", "kg")}</div>
     </div>
     <div class="chart-block">
       <div class="chart-label">체지방량 추이 (kg)</div>
-      <div class="chart-wrap" style="height:180px;">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_mass: r.parsed_data?.body_fat_mass})), "body_fat_mass", "#c9a94e", "체지방량", "kg")}</div>
+      <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_mass: r.parsed_data?.body_fat_mass})), "body_fat_mass", "#c9a94e", "체지방량", "kg")}</div>
     </div>
     <div class="chart-block">
       <div class="chart-label">체지방률 추이 (%)</div>
-      <div class="chart-wrap" style="height:180px;">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_percent: r.parsed_data?.body_fat_percent})), "body_fat_percent", "#e07a5f", "체지방률", "%")}</div>
+      <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_percent: r.parsed_data?.body_fat_percent})), "body_fat_percent", "#e07a5f", "체지방률", "%")}</div>
     </div>
   </div>
   ` : ""}
