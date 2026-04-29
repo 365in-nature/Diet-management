@@ -312,7 +312,12 @@ function LineChart({ data, valueKey, color = "#52b788", label = "", showDiff = f
   const areaD = `${pathD} L ${pts[pts.length-1].x} ${h} L ${pts[0].x} ${h} Z`;
 
   return (
-    <div className="chart-wrap" style={{height: showDiff ? 200 : 180}}>
+    <div className="chart-wrap" style={{height: showDiff ? 200 : 180, position: "relative"}}>
+      {showDiff && (
+        <div style={{position:"absolute", top:4, right:8, fontSize:10, color:"#9090b0", zIndex:1}}>
+          % = 최초 체중 대비 변화율
+        </div>
+      )}
       <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
         <defs>
           <linearGradient id={`g-${valueKey}`} x1="0" y1="0" x2="0" y2="1">
@@ -333,7 +338,7 @@ function LineChart({ data, valueKey, color = "#52b788", label = "", showDiff = f
             </text>
             {showDiff && p.diffPct !== null && (
               <text x={p.x} y={p.y - 20} textAnchor="middle" fontSize="9" fill={parseFloat(p.diffPct) < 0 ? "#2d6a4f" : "#e07a5f"}>
-                최초 대비 {parseFloat(p.diffPct) > 0 ? "+" : ""}{p.diffPct}%
+                {parseFloat(p.diffPct) > 0 ? "+" : ""}{p.diffPct}%
               </text>
             )}
           </g>
@@ -656,7 +661,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
         }));
         const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
         const areaD = `${pathD} L ${pts[pts.length-1].x} ${h} L ${pts[0].x} ${h} Z`;
-        return `<svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%">
+        return `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%">
           <defs><linearGradient id="g${valueKey}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
             <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
