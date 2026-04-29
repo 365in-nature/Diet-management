@@ -839,7 +839,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
       ${patient.name}
       <span style="font-size:26px;font-weight:400;color:#4a4a6a;">님</span>
     </div>
-    <div style="font-size:18px;font-weight:300;color:#4a4a6a;margin-bottom:36px;">다이어트 · 체형관리 기록</div>
+    <div style="font-size:18px;font-weight:300;color:#4a4a6a;margin-bottom:36px;">건강관리 기록</div>
 
     <div style="width:48px;height:3px;background:linear-gradient(90deg,#2d6a4f,#52b788);border-radius:2px;margin-bottom:36px;"></div>
 
@@ -914,12 +914,12 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   <div class="chart-row">
     <div class="chart-block">
       <div class="chart-label">체중 추이 (kg)</div>
-      <div class="chart-wrap">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg", true)}</div>
+      <div class="chart-wrap" style="height:225px;">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg", true)}</div>
     </div>
     ${ms.some(m => m.bmi) ? `
     <div class="chart-block">
       <div class="chart-label">BMI 추이</div>
-      <div class="chart-wrap">${makeSVG(ms, "bmi", "#c9a94e", "BMI", "")}</div>
+      <div class="chart-wrap" style="height:225px;">${makeSVG(ms, "bmi", "#c9a94e", "BMI", "")}</div>
     </div>` : "<div></div>"}
   </div>
   ` : '<div style="color:#9090b0;font-size:12px;padding:8px 0">체형 측정 데이터가 2개 이상이어야 그래프가 표시됩니다</div>'}
@@ -984,15 +984,15 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
   <div class="chart-row" style="grid-template-columns:1fr 1fr 1fr;">
     <div class="chart-block">
       <div class="chart-label">골격근량 추이 (kg)</div>
-      <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, muscle_mass: r.parsed_data?.muscle_mass})), "muscle_mass", "#2d6a4f", "골격근량", "kg")}</div>
+      <div class="chart-wrap" style="height:180px;">${makeSVG(ib.map(r => ({measured_at: r.measured_at, muscle_mass: r.parsed_data?.muscle_mass})), "muscle_mass", "#2d6a4f", "골격근량", "kg")}</div>
     </div>
     <div class="chart-block">
       <div class="chart-label">체지방량 추이 (kg)</div>
-      <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_mass: r.parsed_data?.body_fat_mass})), "body_fat_mass", "#c9a94e", "체지방량", "kg")}</div>
+      <div class="chart-wrap" style="height:180px;">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_mass: r.parsed_data?.body_fat_mass})), "body_fat_mass", "#c9a94e", "체지방량", "kg")}</div>
     </div>
     <div class="chart-block">
       <div class="chart-label">체지방률 추이 (%)</div>
-      <div class="chart-wrap">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_percent: r.parsed_data?.body_fat_percent})), "body_fat_percent", "#e07a5f", "체지방률", "%")}</div>
+      <div class="chart-wrap" style="height:180px;">${makeSVG(ib.map(r => ({measured_at: r.measured_at, body_fat_percent: r.parsed_data?.body_fat_percent})), "body_fat_percent", "#e07a5f", "체지방률", "%")}</div>
     </div>
   </div>
   ` : ""}
@@ -1060,7 +1060,7 @@ function PatientDetailPage({ patient, onBack, currentUser }) {
 </div><!-- /body -->
 
 <div class="footer" style="page-break-before:avoid;break-before:avoid;">
-  <span>韓醫 Diet 건강관리 리포트</span>
+  <span>건강관리 리포트</span>
   <span>${patient.name} 님 · 출력일 ${formatDate(today())}</span>
 </div>
 
