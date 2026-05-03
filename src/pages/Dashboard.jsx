@@ -75,6 +75,33 @@ function HappycallCard({ item, onToggle, onNoAnswer, onNavigate }) {
   const typeBg   = item.patientType === "diet" ? "var(--accent-pale)" : "var(--teal-pale)";
   const typeLabel = item.patientType === "diet" ? "👥 다이어트" : "🌿 탕약";
 
+  // 프리미엄 알림 카드
+  if (item.isPremiumAlert) {
+    return (
+      <div style={{
+        borderRadius:"var(--r)", padding:"14px 18px", cursor:"pointer", transition:"all 0.2s",
+        border:"1.5px solid #f5c6bd", background:"#fffaf9",
+      }} onClick={() => onNavigate(item)}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+              <span style={{ background:"var(--accent-pale)", color:"var(--accent)", fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:20 }}>{typeLabel}</span>
+              <span style={{ background:"#fff3e0", color:"#e07000", fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:20 }}>🏥 프리미엄 재내원 필요</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:17, fontWeight:700 }}>{item.patientName}</span>
+              <span style={{ fontSize:12, color:"var(--ink-muted)" }}>차트 #{item.chartNumber}</span>
+              <span style={{ fontSize:12, color:"var(--warn)" }}>마지막 프리미엄 관리 13일 초과</span>
+            </div>
+          </div>
+          <div style={{ flexShrink:0 }} onClick={e => e.stopPropagation()}>
+            <button className="btn btn-sm btn-secondary" onClick={() => onNavigate(item)}>상세 보기</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       borderRadius:"var(--r)", padding:"14px 18px", cursor:"pointer", transition:"all 0.2s",
@@ -177,6 +204,12 @@ export default function Dashboard({
       .select("*, patients(id, name, chart_number), happycall_logs(*), prescription_updates(*)")
       .eq("is_completed", false);
 
+    // 프리미엄 치료 방문 데이터
+    const { data: allVisits } = await supabase
+      .from("visits")
+      .select("patient_id, visited_at, treatment_types")
+      .order("visited_at", { ascending: false });
+
     // 탕약 처방
     const { data: tPrescriptions } = await supabase
       .from("tang_prescriptions")
@@ -224,6 +257,44 @@ export default function Dashboard({
       if (isTodayOrPast(reservationDate) && !reservationHC?.is_done) {
         allCalls.push({ id:`tang-reservation-${p.id}`, patientType:"tang", patientId:patient.id, patientName:patient.name, chartNumber:patient.chart_number, prescriptionId:p.id, callKind:"예약", callDate:reservationDate, isDone:false, noAnswerCount:reservationHC?.no_answer_count||0, memo:reservationHC?.memo||null, hcRecord:reservationHC||null, callType:"reservation", table:"tang_happycall_logs" });
       }
+    });
+
+    // 프리미엄 관리 13일 초과 알림
+    const premiumAlertSet = new Set();
+    const premiumByPatient = {};
+    (allVisits || []).forEach(v => {
+      if ((v.treatment_types || []).includes("premium")) {
+        if (!premiumByPatient[v.patient_id] || v.visited_at > premiumByPatient[v.patient_id]) {
+          premiumByPatient[v.patient_id] = v.visited_at;
+        }
+      }
+    });
+    Object.entries(premiumByPatient).forEach(([pid, lastDate]) => {
+      const diff = Math.floor((new Date(today()) - new Date(lastDate)) / (1000*60*60*24));
+      if (diff > 13) premiumAlertSet.add(pid);
+    });
+
+    // 프리미엄 알림 해피콜 목록에 추가
+    premiumAlertSet.forEach(pid => {
+      const patient = (dPrescriptions || []).find(p => p.patients?.id === pid)?.patients;
+      if (!patient) return;
+      allCalls.push({
+        id: `premium-${pid}`,
+        patientType: "diet",
+        patientId: pid,
+        patientName: patient.name,
+        chartNumber: patient.chart_number,
+        prescriptionId: null,
+        callKind: "프리미엄",
+        callDate: today(),
+        isDone: false,
+        noAnswerCount: 0,
+        memo: null,
+        hcRecord: null,
+        callType: null,
+        table: null,
+        isPremiumAlert: true,
+      });
     });
 
     allCalls.sort((a, b) => a.callDate.localeCompare(b.callDate));

@@ -1404,8 +1404,11 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
     setLoading(true);
     const { data } = await supabase.from("patients").select("*, goals(*), packages(*), measurements(*)").order("created_at", { ascending: false });
     const { data: prescriptions } = await supabase.from("prescriptions").select("*, happycall_logs(*), prescription_updates(*)").eq("is_completed", false);
+    const { data: allVisits } = await supabase.from("visits").select("patient_id, visited_at, treatment_types").order("visited_at", { ascending: false });
 
     const alertMap = {};
+    const premiumAlertSet = new Set();
+
     (prescriptions || []).forEach(p => {
       const latestUpdate = (p.prescription_updates || []).sort((a,b) => b.created_at.localeCompare(a.created_at))[0];
       const reservationDate = latestUpdate ? latestUpdate.new_reservation_happycall_date : p.reservation_happycall_date;
@@ -1415,13 +1418,30 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
       if (isTodayOrPast(p.arrival_happycall_date) && !arrivalDone) alertMap[p.patient_id].push({ kind: "도착" });
       if (isTodayOrPast(reservationDate) && !reservationDone) alertMap[p.patient_id].push({ kind: "예약" });
     });
+
+    // 프리미엄 관리 13일 초과 체크
+    const premiumByPatient = {};
+    (allVisits || []).forEach(v => {
+      if ((v.treatment_types || []).includes("premium")) {
+        if (!premiumByPatient[v.patient_id] || v.visited_at > premiumByPatient[v.patient_id]) {
+          premiumByPatient[v.patient_id] = v.visited_at;
+        }
+      }
+    });
+    Object.entries(premiumByPatient).forEach(([pid, lastDate]) => {
+      const diff = Math.floor((new Date(today()) - new Date(lastDate)) / (1000*60*60*24));
+      if (diff > 13) premiumAlertSet.add(pid);
+    });
+
     setAlerts(alertMap);
 
+    // 정렬: 해피콜 대상 → 프리미엄 알림 → 나머지
     const sorted = [...(data || [])].sort((a, b) => {
-      const aHas = (alertMap[a.id] || []).length > 0 ? 0 : 1;
-      const bHas = (alertMap[b.id] || []).length > 0 ? 0 : 1;
-      return aHas - bHas;
-    });
+      const aScore = (alertMap[a.id] || []).length > 0 ? 0 : premiumAlertSet.has(a.id) ? 1 : 2;
+      const bScore = (alertMap[b.id] || []).length > 0 ? 0 : premiumAlertSet.has(b.id) ? 1 : 2;
+      return aScore - bScore;
+    }).map(p => ({ ...p, _premiumAlert: premiumAlertSet.has(p.id) }));
+
     setPatients(sorted);
     setLoading(false);
   }, []);
@@ -1467,8 +1487,9 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
             const latestWeight = [...measurements].sort((a,b) => b.measured_at.localeCompare(a.measured_at))[0]?.weight;
             const todayAlerts = alerts[p.id] || [];
             const hasAlert = todayAlerts.length > 0;
+            const hasPremiumAlert = p._premiumAlert;
             return (
-              <div key={p.id} className={`patient-card ${hasAlert ? "alert" : ""}`} onClick={() => setSelected(p)}>
+              <div key={p.id} className={`patient-card ${hasAlert || hasPremiumAlert ? "alert" : ""}`} onClick={() => setSelected(p)}>
                 <div className="patient-card-header">
                   <div>
                     <div className="patient-name">{p.name}
@@ -1482,6 +1503,9 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
                         {a.kind === "도착" ? "📦" : "📅"} {a.kind} 해피콜
                       </span>
                     ))}
+                    {hasPremiumAlert && (
+                      <span className="badge badge-warn">🏥 프리미엄 재내원 필요</span>
+                    )}
                     <button className="btn btn-xs btn-danger" onClick={async e => {
                       e.stopPropagation();
                       if (!window.confirm(`${p.name} 환자를 삭제하시겠습니까?`)) return;
