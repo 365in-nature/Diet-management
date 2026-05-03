@@ -479,13 +479,14 @@ function NewPatientModal({ onClose }) {
 // =============================================
 // TANG PATIENTS PAGE
 // =============================================
-export default function TangPatients({ currentUser }) {
+export default function TangPatients({ currentUser, selectPatientId, selectTab }) {
   const [patients, setPatients] = useState([]);
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState({});
   const [selected, setSelected] = useState(null);
+  const [initialTab, setInitialTab] = useState("prescription");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -522,11 +523,22 @@ export default function TangPatients({ currentUser }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // 대시보드에서 직접 환자+탭 선택 시 처리
+  useEffect(() => {
+    if (selectPatientId && patients.length > 0) {
+      const found = patients.find(p => p.id === selectPatientId);
+      if (found) {
+        setSelected(found);
+        setInitialTab(selectTab || "prescription");
+      }
+    }
+  }, [selectPatientId, patients, selectTab]);
+
   const filtered = patients.filter(p =>
     p.name?.includes(search) || p.chart_number?.includes(search)
   );
 
-  if (selected) return <PatientDetail patient={selected} onBack={() => { setSelected(null); load(); }} />;
+  if (selected) return <PatientDetail patient={selected} initialTab={initialTab} onBack={() => { setSelected(null); load(); }} />;
 
   return (
     <div>

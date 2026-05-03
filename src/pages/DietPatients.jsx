@@ -583,8 +583,434 @@ function PrescriptionTab({ patient }) {
 // =============================================
 // 환자 상세 페이지
 // =============================================
-function PatientDetail({ patient, onBack }) {
-  const [tab, setTab] = useState("measurement");
+// =============================================
+// 인바디 분석 탭
+// =============================================
+const INBODY_FIELDS = [
+  { key: "height",           label: "신장",      unit: "cm"   },
+  { key: "weight",           label: "체중",      unit: "kg"   },
+  { key: "body_fat_percent", label: "체지방률",  unit: "%"    },
+  { key: "muscle_mass",      label: "골격근량",  unit: "kg"   },
+  { key: "body_fat_mass",    label: "체지방량",  unit: "kg"   },
+  { key: "bmi",              label: "BMI",       unit: ""     },
+  { key: "bmr",              label: "기초대사량", unit: "kcal" },
+  { key: "total_body_water", label: "체수분",    unit: "L"    },
+];
+const COMPARE_FIELDS = [
+  { key: "muscle_mass",      label: "골격근량",  unit: "kg", color: "var(--accent)" },
+  { key: "body_fat_mass",    label: "체지방량",  unit: "kg", color: "var(--gold)"   },
+  { key: "body_fat_percent", label: "체지방률",  unit: "%",  color: "var(--warn)"   },
+];
+
+function bodyFatAlert(pct, gender) {
+  if (!pct) return null;
+  const p = parseFloat(pct);
+  if (gender === "female") {
+    if (p >= 35) return { msg: "고도비만 수준의 체지방률입니다.", color: "var(--warn)" };
+    if (p >= 28) return { msg: "체지방률 28% 이상 — 마른 비만 가능성이 있습니다.", color: "var(--warn)" };
+  } else {
+    if (p >= 30) return { msg: "고도비만 수준의 체지방률입니다.", color: "var(--warn)" };
+    if (p >= 25) return { msg: "체지방률 25% 이상 — 마른 비만 가능성이 있습니다.", color: "var(--warn)" };
+  }
+  return null;
+}
+
+function InbodyEditForm({ initialData, onSave, onCancel, title }) {
+  const [form, setForm] = useState({
+    measured_date: initialData?.measured_date || initialData?.measured_at || today(),
+    height: initialData?.height || "",
+    weight: initialData?.weight || "",
+    body_fat_percent: initialData?.body_fat_percent || "",
+    muscle_mass: initialData?.muscle_mass || "",
+    body_fat_mass: initialData?.body_fat_mass || "",
+    bmi: initialData?.bmi || "",
+    bmr: initialData?.bmr || "",
+    total_body_water: initialData?.total_body_water || "",
+  });
+  return (
+    <div className="card" style={{marginBottom:16, border:"2px solid var(--accent)"}}>
+      <div className="section-title" style={{marginBottom:12, color:"var(--accent)"}}>{title}</div>
+      <div className="form-grid">
+        <div className="form-group">
+          <label className="form-label">측정일</label>
+          <input className="form-input" type="date" value={form.measured_date} onChange={e => setForm({...form, measured_date: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">신장 (cm)</label>
+          <input className="form-input" type="number" step="0.1" value={form.height} onChange={e => setForm({...form, height: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">체중 (kg)</label>
+          <input className="form-input" type="number" step="0.1" value={form.weight} onChange={e => setForm({...form, weight: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">체지방률 (%)</label>
+          <input className="form-input" type="number" step="0.1" value={form.body_fat_percent} onChange={e => setForm({...form, body_fat_percent: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">골격근량 (kg)</label>
+          <input className="form-input" type="number" step="0.1" value={form.muscle_mass} onChange={e => setForm({...form, muscle_mass: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">체지방량 (kg)</label>
+          <input className="form-input" type="number" step="0.1" value={form.body_fat_mass} onChange={e => setForm({...form, body_fat_mass: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">BMI</label>
+          <input className="form-input" type="number" step="0.1" value={form.bmi} onChange={e => setForm({...form, bmi: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">기초대사량 (kcal)</label>
+          <input className="form-input" type="number" value={form.bmr} onChange={e => setForm({...form, bmr: e.target.value})} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">체수분 (L)</label>
+          <input className="form-input" type="number" step="0.1" value={form.total_body_water} onChange={e => setForm({...form, total_body_water: e.target.value})} />
+        </div>
+      </div>
+      <div className="form-actions">
+        <button className="btn btn-secondary" onClick={onCancel}>취소</button>
+        <button className="btn btn-primary" onClick={() => onSave(form)}>저장</button>
+      </div>
+    </div>
+  );
+}
+
+function InbodyTab({ patient }) {
+  const [records, setRecords] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [ageGroup, setAgeGroup] = useState("adult");
+  const [editingRecord, setEditingRecord] = useState(null);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("inbody_records").select("*").eq("patient_id", patient.id).order("measured_at", { ascending: true });
+    setRecords(data || []);
+  }, [patient.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || file.type !== "application/pdf") return alert("PDF 파일만 업로드 가능합니다.");
+    setUploading(true);
+    const fileName = `inbody/${patient.id}/${Date.now()}.pdf`;
+    const { error: uploadErr } = await supabase.storage.from("inbody-pdfs").upload(fileName, file);
+    if (uploadErr) { alert("업로드 실패: " + uploadErr.message); setUploading(false); return; }
+    const { data: urlData } = supabase.storage.from("inbody-pdfs").getPublicUrl(fileName);
+    setParsing(true);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const base64 = ev.target.result.split(",")[1];
+      try {
+        const res = await fetch("/api/parse-inbody", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64, mediaType: "application/pdf", ageGroup }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "파싱 실패");
+        await saveInbodyRecord(result.parsed, urlData.publicUrl);
+      } catch(err) {
+        alert("AI 파싱 실패: " + err.message + "\n수동으로 기록을 추가해주세요.");
+      }
+      setParsing(false); setUploading(false);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const saveInbodyRecord = async (data, pdfUrl) => {
+    const measuredAt = data.measured_date || data.measured_at || today();
+    await supabase.from("inbody_records").insert([{ patient_id: patient.id, measured_at: measuredAt, parsed_data: data, pdf_url: pdfUrl || null }]);
+    if (data.weight) {
+      await supabase.from("measurements").insert([{ patient_id: patient.id, measured_at: measuredAt, height: data.height || null, weight: data.weight || null, bmi: data.bmi || null, memo: "인바디 자동 입력" }]);
+    }
+    load();
+  };
+
+  const updateInbodyRecord = async (record, formData) => {
+    const measuredAt = formData.measured_date || today();
+    await supabase.from("inbody_records").update({ measured_at: measuredAt, parsed_data: formData }).eq("id", record.id);
+    if (formData.weight) {
+      const { data: existing } = await supabase.from("measurements").select("id").eq("patient_id", patient.id).eq("measured_at", measuredAt).limit(1);
+      if (existing?.length > 0) {
+        await supabase.from("measurements").update({ height: formData.height || null, weight: formData.weight || null, bmi: formData.bmi || null }).eq("id", existing[0].id);
+      } else {
+        await supabase.from("measurements").insert([{ patient_id: patient.id, measured_at: measuredAt, height: formData.height || null, weight: formData.weight || null, bmi: formData.bmi || null, memo: "인바디 자동 입력" }]);
+      }
+    }
+    setEditingRecord(null);
+    if (selected?.id === record.id) setSelected(null);
+    load();
+  };
+
+  const deleteRecord = async (record) => {
+    if (!window.confirm("이 인바디 기록을 삭제하시겠습니까?")) return;
+    await supabase.from("inbody_records").delete().eq("id", record.id);
+    if (selected?.id === record.id) setSelected(null);
+    load();
+  };
+
+  const chartData = records.map(r => ({ measured_at: r.measured_at, ...r.parsed_data }));
+
+  return (
+    <div>
+      <div className="card" style={{marginBottom:16}}>
+        <div className="section-header">
+          <div className="section-title">📄 인바디 (InBody J50)</div>
+        </div>
+        <div style={{display:"flex", gap:12, alignItems:"center", flexWrap:"wrap"}}>
+          <div style={{display:"flex", gap:8}}>
+            <button className={`btn btn-sm ${ageGroup === "adult" ? "btn-primary" : "btn-secondary"}`} onClick={() => setAgeGroup("adult")}>성인용</button>
+            <button className={`btn btn-sm ${ageGroup === "child" ? "btn-primary" : "btn-secondary"}`} onClick={() => setAgeGroup("child")}>아동용</button>
+          </div>
+          <label style={{cursor:"pointer"}}>
+            <span className="btn btn-primary">{uploading ? (parsing ? "🤖 AI 분석 중..." : "업로드 중...") : "+ PDF 업로드"}</span>
+            <input type="file" accept=".pdf" style={{display:"none"}} onChange={handleFileUpload} disabled={uploading} />
+          </label>
+          <button className="btn btn-secondary" onClick={() => setEditingRecord({ id: null, isNew: true })}>+ 수동 입력</button>
+        </div>
+        <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:8}}>PDF 업로드 시 AI가 자동 파싱 후 즉시 저장됩니다.</div>
+      </div>
+
+      {editingRecord?.isNew && (
+        <InbodyEditForm initialData={{ measured_date: today() }} title="✏️ 인바디 수동 입력"
+          onSave={(formData) => { saveInbodyRecord(formData, null); setEditingRecord(null); }}
+          onCancel={() => setEditingRecord(null)} />
+      )}
+      {editingRecord && !editingRecord.isNew && (
+        <InbodyEditForm initialData={{ ...editingRecord.parsed_data, measured_date: editingRecord.measured_at }} title="✏️ 인바디 기록 수정"
+          onSave={(formData) => updateInbodyRecord(editingRecord, formData)}
+          onCancel={() => setEditingRecord(null)} />
+      )}
+
+      {/* 변화 추이 차트 */}
+      {chartData.length >= 2 && (
+        <div className="card" style={{marginBottom:16}}>
+          <div className="section-title" style={{marginBottom:12}}>📈 변화 추이</div>
+          {COMPARE_FIELDS.map(f => chartData.some(d => d[f.key]) && (
+            <div key={f.key} style={{marginBottom:16}}>
+              <div className="form-label" style={{marginBottom:8}}>{f.label} ({f.unit})</div>
+              <div style={{display:"flex", alignItems:"flex-end", gap:4, height:80}}>
+                {chartData.map((d, i) => {
+                  const vals = chartData.map(x => parseFloat(x[f.key])).filter(v => !isNaN(v));
+                  const max = Math.max(...vals); const min = Math.min(...vals);
+                  const val = parseFloat(d[f.key]);
+                  const barH = isNaN(val) ? 4 : max === min ? 40 : Math.max(8, ((val - min) / (max - min)) * 60 + 10);
+                  return (
+                    <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2}}>
+                      {!isNaN(val) && <span style={{fontSize:9, color:f.color, fontWeight:700}}>{val}</span>}
+                      <div style={{width:"100%", height:barH, borderRadius:"3px 3px 0 0", background: isNaN(val) ? "var(--border)" : f.color, opacity:0.8}} />
+                      <span style={{fontSize:9, color:"var(--ink-muted)"}}>{formatDate(d.measured_at).slice(5)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 측정 이력 */}
+      <div className="card">
+        <div className="section-header">
+          <div className="section-title">🗂 측정 이력</div>
+        </div>
+        {records.length === 0 ? <div className="empty">인바디 기록이 없습니다</div> : (
+          <div>
+            <div style={{display:"flex", gap:8, flexWrap:"wrap", marginBottom:16}}>
+              {records.map(r => (
+                <button key={r.id} className={`btn btn-sm ${selected?.id === r.id ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setSelected(selected?.id === r.id ? null : r)}>
+                  {formatDate(r.measured_at)}
+                </button>
+              ))}
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>항목</th>{records.map(r => <th key={r.id}>{formatDate(r.measured_at)}</th>)}<th></th></tr>
+                </thead>
+                <tbody>
+                  {COMPARE_FIELDS.map(f => (
+                    <tr key={f.key}>
+                      <td><strong>{f.label}</strong></td>
+                      {records.map((r, i) => {
+                        const val = r.parsed_data?.[f.key];
+                        const prev = records[i-1]?.parsed_data?.[f.key];
+                        const diff = val && prev ? (parseFloat(val) - parseFloat(prev)).toFixed(1) : null;
+                        return (
+                          <td key={r.id}>
+                            {val != null ? `${val} ${f.unit}` : "-"}
+                            {diff && <span style={{fontSize:11, marginLeft:4, color: parseFloat(diff) < 0 ? "var(--accent)" : "var(--warn)"}}>({parseFloat(diff) > 0 ? "+" : ""}{diff})</span>}
+                          </td>
+                        );
+                      })}
+                      <td></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {selected && (
+              <div style={{marginTop:16}}>
+                <div style={{display:"flex", gap:8, marginBottom:12}}>
+                  <button className="btn btn-sm btn-secondary" onClick={() => setEditingRecord(selected)}>✏️ 수정</button>
+                  <button className="btn btn-sm btn-danger" onClick={() => deleteRecord(selected)}>삭제</button>
+                  {selected.pdf_url && <a href={selected.pdf_url} target="_blank" rel="noreferrer" className="btn btn-sm btn-secondary">📥 원본 PDF</a>}
+                </div>
+                {INBODY_FIELDS.map(f => {
+                  const val = selected.parsed_data?.[f.key];
+                  if (val == null || val === "") return null;
+                  const alert = f.key === "body_fat_percent" ? bodyFatAlert(val, patient.gender) : null;
+                  return (
+                    <div key={f.key} style={{display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid var(--border)"}}>
+                      <span style={{fontSize:12, color:"var(--ink-muted)"}}>{f.label}</span>
+                      <div style={{display:"flex", alignItems:"center", gap:8}}>
+                        <span style={{fontSize:14, fontWeight:600, color: alert ? alert.color : "inherit"}}>{val} {f.unit}</span>
+                        {alert && <span style={{fontSize:11, color:alert.color, fontWeight:600}}>⚠️ {alert.msg}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// 침구실 치료 탭
+// =============================================
+function VisitTab({ patient }) {
+  const [visits, setVisits] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ visited_at: today(), treatment_types: [], memo: "" });
+  const [treatmentEndDate, setTreatmentEndDate] = useState(null);
+
+  const TREATMENTS = [
+    { key: "general",        label: "일반 관리" },
+    { key: "premium",        label: "프리미엄 관리" },
+    { key: "herbal_injection", label: "약침" },
+    { key: "highfrequency",  label: "고주파" },
+    { key: "coolsculpting",  label: "쿨쎄라" },
+    { key: "other",          label: "기타" },
+  ];
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("visits").select("*").eq("patient_id", patient.id).order("visited_at", { ascending: false });
+    setVisits(data || []);
+    const { data: pkgData } = await supabase.from("packages").select("*").eq("patient_id", patient.id).eq("is_active", true).order("start_date");
+    if (pkgData?.length > 0) {
+      const totalDays = pkgData.reduce((s, p) => s + Number(p.package_months) * 30, 0);
+      const firstStart = [...pkgData].sort((a,b) => a.start_date.localeCompare(b.start_date))[0].start_date;
+      setTreatmentEndDate(addDays(firstStart, totalDays));
+    } else {
+      setTreatmentEndDate(null);
+    }
+  }, [patient.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggleTreatment = (key) => {
+    setForm(f => ({
+      ...f,
+      treatment_types: f.treatment_types.includes(key)
+        ? f.treatment_types.filter(t => t !== key)
+        : [...f.treatment_types, key],
+    }));
+  };
+
+  const saveVisit = async () => {
+    await supabase.from("visits").insert([{ ...form, patient_id: patient.id }]);
+    setForm({ visited_at: today(), treatment_types: [], memo: "" });
+    setShowForm(false);
+    load();
+  };
+
+  const treatmentLabel = (key) => TREATMENTS.find(t => t.key === key)?.label || key;
+
+  return (
+    <div>
+      <div className="card">
+        <div className="section-header">
+          <div className="section-title">🏥 침구실 치료 기록</div>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(!showForm)}>+ 치료 기록</button>
+        </div>
+
+        {treatmentEndDate && (
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:16, padding:"10px 14px", background:"var(--warn-pale)", borderRadius:8, border:"1px solid #f5c6bd"}}>
+            <span style={{fontSize:13}}>📅 패키지 침구실 치료 종료일</span>
+            <strong style={{color:"var(--warn)", fontSize:15}}>{formatDate(treatmentEndDate)}</strong>
+            <span style={{fontSize:12, color:"var(--ink-muted)"}}>
+              ({Math.max(0, Math.ceil((new Date(treatmentEndDate) - new Date(today())) / (1000*60*60*24)))}일 남음)
+            </span>
+          </div>
+        )}
+
+        {showForm && (
+          <div style={{background:"var(--surface2)", borderRadius:8, padding:16, marginBottom:16}}>
+            <div className="form-group" style={{marginBottom:12}}>
+              <label className="form-label">치료일</label>
+              <input className="form-input" type="date" value={form.visited_at} style={{maxWidth:200}} onChange={e => setForm({...form, visited_at: e.target.value})} />
+            </div>
+            <div className="form-group" style={{marginBottom:12}}>
+              <label className="form-label">치료 종류 (복수 선택)</label>
+              <div style={{display:"flex", gap:8, flexWrap:"wrap", marginTop:6}}>
+                {TREATMENTS.map(t => (
+                  <button key={t.key} className={`btn btn-sm ${form.treatment_types.includes(t.key) ? "btn-primary" : "btn-secondary"}`}
+                    onClick={() => toggleTreatment(t.key)}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">메모 / 특이사항</label>
+              <textarea className="form-input" rows={3} style={{resize:"vertical"}} value={form.memo} onChange={e => setForm({...form, memo: e.target.value})} />
+            </div>
+            <div className="form-actions">
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>취소</button>
+              <button className="btn btn-primary btn-sm" onClick={saveVisit}>저장</button>
+            </div>
+          </div>
+        )}
+
+        {visits.length === 0 ? <div className="empty">치료 기록이 없습니다</div> : (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>치료일</th><th>치료</th><th>메모</th><th></th></tr></thead>
+              <tbody>
+                {visits.map(v => (
+                  <tr key={v.id}>
+                    <td><strong>{formatDate(v.visited_at)}</strong></td>
+                    <td>{(v.treatment_types || []).map(t => <span key={t} className="treatment-tag">{treatmentLabel(t)}</span>)}</td>
+                    <td style={{maxWidth:200, color:"var(--ink-muted)", fontSize:12}}>{v.memo || "-"}</td>
+                    <td><button className="btn btn-xs btn-danger" onClick={async () => {
+                      if (!window.confirm("삭제하시겠습니까?")) return;
+                      await supabase.from("visits").delete().eq("id", v.id);
+                      load();
+                    }}>삭제</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// 환자 상세 페이지
+// =============================================
+function PatientDetail({ patient, onBack, initialTab }) {
+  const [tab, setTab] = useState(initialTab || "measurement");
 
   return (
     <div>
@@ -604,8 +1030,10 @@ function PatientDetail({ patient, onBack }) {
 
       <div className="tabs">
         {[
-          { key: "measurement", label: "① 체형 측정" },
-          { key: "prescription", label: "② 약 처방" },
+          { key: "measurement",  label: "① 체형 측정" },
+          { key: "inbody",       label: "② 인바디 분석" },
+          { key: "prescription", label: "③ 약 처방" },
+          { key: "visit",        label: "④ 침구실 치료" },
         ].map(t => (
           <button key={t.key} className={`tab ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>
             {t.label}
@@ -613,8 +1041,10 @@ function PatientDetail({ patient, onBack }) {
         ))}
       </div>
 
-      {tab === "measurement" && <MeasurementTab patient={patient} />}
+      {tab === "measurement"  && <MeasurementTab patient={patient} />}
+      {tab === "inbody"       && <InbodyTab patient={patient} />}
       {tab === "prescription" && <PrescriptionTab patient={patient} />}
+      {tab === "visit"        && <VisitTab patient={patient} />}
     </div>
   );
 }
@@ -677,13 +1107,14 @@ function NewPatientModal({ onClose }) {
 // =============================================
 // DIET PATIENTS PAGE
 // =============================================
-export default function DietPatients({ currentUser }) {
+export default function DietPatients({ currentUser, selectPatientId, selectTab }) {
   const [patients, setPatients] = useState([]);
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState({});
   const [selected, setSelected] = useState(null);
+  const [initialTab, setInitialTab] = useState("measurement");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -713,11 +1144,22 @@ export default function DietPatients({ currentUser }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // 대시보드에서 직접 환자+탭 선택 시 처리
+  useEffect(() => {
+    if (selectPatientId && patients.length > 0) {
+      const found = patients.find(p => p.id === selectPatientId);
+      if (found) {
+        setSelected(found);
+        setInitialTab(selectTab || "prescription");
+      }
+    }
+  }, [selectPatientId, patients, selectTab]);
+
   const filtered = patients.filter(p =>
     p.name?.includes(search) || p.chart_number?.includes(search)
   );
 
-  if (selected) return <PatientDetail patient={selected} onBack={() => { setSelected(null); load(); }} />;
+  if (selected) return <PatientDetail patient={selected} initialTab={initialTab} onBack={() => { setSelected(null); load(); }} />;
 
   return (
     <div>
