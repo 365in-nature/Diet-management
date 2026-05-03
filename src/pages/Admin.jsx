@@ -63,6 +63,110 @@ export default function Admin({ currentUser, lastBackupAt, onBackup }) {
     load();
   };
 
+  // 구버전 HTML 앱 백업 마이그레이션
+  const handleLegacyMigrate = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!window.confirm("구버전 백업 파일을 가져오시겠습니까?\n신환, 탕약, 식물, 공지사항, 내원현황 데이터가 추가됩니다.")) {
+      e.target.value = ""; return;
+    }
+    setRestoring(true);
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+
+      // 신환 마이그레이션 (patients → new_patients)
+      if (backup.patients && backup.patients.length > 0) {
+        const newPts = backup.patients.map(p => ({
+          route: p.route || "기타",
+          jiin_name: p.jiinName || null,
+          partner_name: p.partnerName || null,
+          etc_memo: p.etcMemo || null,
+          registered_at: p.date || new Date().toISOString().split("T")[0],
+        }));
+        const { error } = await supabase.from("new_patients").insert(newPts);
+        if (error) console.error("신환 마이그레이션 오류:", error.message);
+      }
+
+      // 탕약 환자 마이그레이션 (tangPts → tang_patients)
+      if (backup.tangPts && backup.tangPts.length > 0) {
+        for (const p of backup.tangPts) {
+          const { data: inserted, error } = await supabase.from("tang_patients").insert([{
+            chart_number: p.chart || null,
+            name: p.name || "이름없음",
+          }]).select().single();
+          if (error || !inserted) continue;
+
+          // 처방 정보 마이그레이션
+          if (p.dose && p.regDate) {
+            await supabase.from("tang_prescriptions").insert([{
+              patient_id: inserted.id,
+              prescribed_at: p.regDate,
+              duration_days: p.dose,
+              expected_end_date: p.resvDate || null,
+              arrival_happycall_date: p.arriveDate || null,
+              reservation_happycall_date: p.resvDate || null,
+              is_completed: (p.arriveDone && p.resvDone) || false,
+            }]);
+          }
+        }
+      }
+
+      // 식물 마이그레이션 (plants → plants)
+      if (backup.plants && backup.plants.length > 0) {
+        const plantData = backup.plants.map(p => ({
+          name: p.name || "식물",
+          location: p.location || null,
+          memo: p.memo || null,
+          last_watered_at: p.lastWatered || null,
+        }));
+        await supabase.from("plants").insert(plantData);
+      }
+
+      // 공지사항 마이그레이션 (notices → notices)
+      if (backup.notices && backup.notices.length > 0) {
+        for (const n of backup.notices) {
+          const { data: inserted, error } = await supabase.from("notices").insert([{
+            title: n.title || "제목없음",
+            content: n.content || null,
+            created_at: n.date ? new Date(n.date).toISOString() : new Date().toISOString(),
+          }]).select().single();
+          if (error || !inserted) continue;
+
+          // 공지 로그 마이그레이션
+          if (backup.noticeLogs) {
+            const logs = Object.values(backup.noticeLogs).flat().filter(l => l.noticeId === n.id);
+            for (const log of logs) {
+              await supabase.from("notice_logs").insert([{
+                notice_id: inserted.id,
+                content: log.content || null,
+                created_at: log.date ? new Date(log.date).toISOString() : new Date().toISOString(),
+              }]);
+            }
+          }
+        }
+      }
+
+      // 내원 현황 마이그레이션 (visitData → visit_stats)
+      if (backup.visitData && Object.keys(backup.visitData).length > 0) {
+        const visitRows = Object.entries(backup.visitData).map(([date, d]) => ({
+          stat_date: date,
+          reserved: d.reserved || 0,
+          visited: d.visited || 0,
+        }));
+        await supabase.from("visit_stats").upsert(visitRows, { onConflict: "stat_date" });
+      }
+
+      alert(`✅ 마이그레이션 완료!\n신환 ${backup.patients?.length || 0}건, 탕약 ${backup.tangPts?.length || 0}건, 식물 ${backup.plants?.length || 0}건, 공지사항 ${backup.notices?.length || 0}건, 내원현황 ${Object.keys(backup.visitData || {}).length}건`);
+      load();
+    } catch (err) {
+      alert("마이그레이션 중 오류가 발생했습니다: " + err.message);
+    } finally {
+      setRestoring(false);
+      e.target.value = "";
+    }
+  };
+
   // 복원 처리
   const handleRestore = async (e) => {
     const file = e.target.files?.[0];
@@ -185,16 +289,37 @@ export default function Admin({ currentUser, lastBackupAt, onBackup }) {
             <div style={{fontSize:13, color:"var(--warn)", fontWeight:600, marginBottom:12}}>
               ⚠️ 복원 시 현재 데이터에 백업 데이터가 덮어씌워집니다. 복원 전 반드시 현재 상태를 백업해 두세요.
             </div>
-            <label style={{
-              display:"inline-flex", alignItems:"center", gap:8,
-              padding:"10px 18px", background:"var(--surface2)", border:"1.5px solid var(--border)",
-              borderRadius:"var(--r-sm)", cursor:"pointer", fontSize:13, fontWeight:600,
-              color: restoring ? "var(--ink-muted)" : "var(--ink-light)",
-              transition:"all 0.2s",
-            }}>
-              {restoring ? "복원 중..." : "📂 백업 파일 선택 (.json)"}
-              <input type="file" accept=".json" style={{display:"none"}} onChange={handleRestore} disabled={restoring} />
-            </label>
+            <div style={{display:"flex", flexDirection:"column", gap:10}}>
+              <label style={{
+                display:"inline-flex", alignItems:"center", gap:8,
+                padding:"10px 18px", background:"var(--surface2)", border:"1.5px solid var(--border)",
+                borderRadius:"var(--r-sm)", cursor:"pointer", fontSize:13, fontWeight:600,
+                color: restoring ? "var(--ink-muted)" : "var(--ink-light)",
+                transition:"all 0.2s",
+              }}>
+                {restoring ? "복원 중..." : "📂 통합 백업 파일 선택 (.json)"}
+                <input type="file" accept=".json" style={{display:"none"}} onChange={handleRestore} disabled={restoring} />
+              </label>
+
+              {/* 구버전 HTML 앱 백업 마이그레이션 */}
+              <div style={{borderTop:"1px solid var(--border)", paddingTop:12}}>
+                <div style={{fontSize:13, fontWeight:700, marginBottom:6}}>📦 구버전 원내 관리 앱 데이터 가져오기</div>
+                <div style={{fontSize:12, color:"var(--ink-muted)", marginBottom:10}}>
+                  기존 HTML 앱(365자연안에한의원)의 백업 JSON 파일을 Supabase로 가져옵니다.
+                  신환, 탕약, 식물, 공지사항, 내원현황 데이터가 마이그레이션됩니다.
+                </div>
+                <label style={{
+                  display:"inline-flex", alignItems:"center", gap:8,
+                  padding:"10px 18px", background:"var(--teal-pale)", border:"1.5px solid var(--teal)",
+                  borderRadius:"var(--r-sm)", cursor:"pointer", fontSize:13, fontWeight:600,
+                  color: restoring ? "var(--ink-muted)" : "var(--teal)",
+                  transition:"all 0.2s",
+                }}>
+                  {restoring ? "가져오는 중..." : "📥 구버전 백업 파일 선택"}
+                  <input type="file" accept=".json" style={{display:"none"}} onChange={handleLegacyMigrate} disabled={restoring} />
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* 백업 이력 */}
