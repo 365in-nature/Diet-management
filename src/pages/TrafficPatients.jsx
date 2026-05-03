@@ -31,21 +31,21 @@ function ZoneBadge({ zone }) {
 function VisitTab({ patient, visits, onVisitChange }) {
   const visitDates = visits.map(v => v.visit_date);
   const todayStr = today();
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [addingVisit, setAddingVisit] = useState(false);
 
-  // 최근 30일 내원 기록
-  const recent = [...visits]
-    .sort((a, b) => b.visit_date.localeCompare(a.visit_date))
-    .slice(0, 30);
+  // 최근 30건 내원 기록
+  const recent = [...visits].sort((a,b) => b.visit_date.localeCompare(a.visit_date)).slice(0, 30);
 
   const { zone, maxPerWeek } = getTreatmentZone(patient.accident_date, todayStr, patient.is_severe);
-  const { start: weekStart, end: weekEnd } = zone !== "before"
-    ? getWeekRange(patient.accident_date, todayStr)
-    : { start: null, end: null };
+  const { start: weekStart, end: weekEnd } = zone !== "before" ? getWeekRange(patient.accident_date, todayStr) : { start:null, end:null };
   const visitsThisWeek = weekStart ? visitDates.filter(d => d >= weekStart && d <= weekEnd).length : 0;
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
   const canTreat = canTreatToday(patient.accident_date, patient.is_severe, visitDates);
   const todayVisited = visitDates.includes(todayStr);
 
+  // 오늘 내원 토글
   const handleToggle = async () => {
     if (todayVisited) {
       await supabase.from("traffic_visits").delete().eq("patient_id", patient.id).eq("visit_date", todayStr);
@@ -55,27 +55,84 @@ function VisitTab({ patient, visits, onVisitChange }) {
     onVisitChange();
   };
 
+  // 날짜 선택해서 내원 추가
+  const handleAddVisitByDate = async () => {
+    if (visitDates.includes(selectedDate)) {
+      if (!window.confirm(`${formatDate(selectedDate)} 내원 기록을 삭제하시겠습니까?`)) return;
+      await supabase.from("traffic_visits").delete().eq("patient_id", patient.id).eq("visit_date", selectedDate);
+    } else {
+      await supabase.from("traffic_visits").insert([{ patient_id: patient.id, visit_date: selectedDate }]);
+    }
+    setAddingVisit(false);
+    onVisitChange();
+  };
+
+  // 날짜별 미니 달력 (인라인)
+  const MiniCal = () => {
+    const sel = new Date(selectedDate);
+    const [vy, setVy] = useState(sel.getFullYear());
+    const [vm, setVm] = useState(sel.getMonth());
+    const DOW = ["일","월","화","수","목","금","토"];
+    const firstDay = new Date(vy, vm, 1).getDay();
+    const dim = new Date(vy, vm+1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDay; i++) cells.push(null);
+    for (let d = 1; d <= dim; d++) cells.push(d);
+    return (
+      <div style={{ background:"var(--surface)", border:"1.5px solid var(--border)", borderRadius:10, padding:14, marginTop:10 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+          <button onClick={() => { if(vm===0){setVy(y=>y-1);setVm(11);}else setVm(m=>m-1); }} style={{ background:"none",border:"none",cursor:"pointer",fontSize:15,color:"var(--ink-muted)" }}>‹</button>
+          <span style={{ fontWeight:700, fontSize:13 }}>{vy}년 {vm+1}월</span>
+          <button onClick={() => { if(vm===11){setVy(y=>y+1);setVm(0);}else setVm(m=>m+1); }} style={{ background:"none",border:"none",cursor:"pointer",fontSize:15,color:"var(--ink-muted)" }}>›</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2, marginBottom:4 }}>
+          {DOW.map((d,i) => <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:700, color:i===0?"var(--warn)":i===6?"var(--info)":"var(--ink-muted)" }}>{d}</div>)}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
+          {cells.map((d,i) => {
+            if (!d) return <div key={`e-${i}`} />;
+            const ds = `${vy}-${String(vm+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+            const isSel = ds === selectedDate;
+            const isVisited = visitDates.includes(ds);
+            const dow = (firstDay+d-1)%7;
+            return (
+              <button key={ds} onClick={() => setSelectedDate(ds)} style={{
+                width:"100%", aspectRatio:"1", border:"none", borderRadius:4, cursor:"pointer", fontSize:11,
+                fontWeight: isSel||isVisited ? 700 : 400,
+                background: isSel ? "var(--traffic)" : isVisited ? "var(--traffic-pale)" : "transparent",
+                color: isSel ? "#fff" : isVisited ? "var(--traffic)" : dow===0?"var(--warn)":dow===6?"var(--info)":"var(--ink)",
+                outline: ds===todayStr&&!isSel ? "1.5px solid var(--accent)" : "none",
+              }}>{d}</button>
+            );
+          })}
+        </div>
+        <div style={{ marginTop:10, display:"flex", gap:8, justifyContent:"flex-end" }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(false)}>취소</button>
+          <button className={`btn btn-sm ${visitDates.includes(selectedDate)?"btn-danger":"btn-primary"}`} onClick={handleAddVisitByDate}>
+            {visitDates.includes(selectedDate) ? `${formatDate(selectedDate)} 내원 삭제` : `${formatDate(selectedDate)} 내원 추가`}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
-      {/* 오늘 내원 처리 */}
+      {/* 내원 처리 카드 */}
       <div className="card" style={{marginBottom:16}}>
         <div className="section-header">
-          <div className="section-title">📅 오늘 내원</div>
+          <div className="section-title">📅 내원 관리</div>
           <ZoneBadge zone={zone} />
         </div>
 
         <div style={{display:"flex", gap:16, flexWrap:"wrap", marginBottom:16, fontSize:13}}>
           <div>
             <div className="form-label">이번 주 내원</div>
-            <div style={{fontSize:18, fontWeight:700, color:"var(--traffic)"}}>
-              {visitsThisWeek} / {zone === "daily" ? "매일" : maxPerWeek}회
-            </div>
+            <div style={{fontSize:18, fontWeight:700, color:"var(--traffic)"}}>{visitsThisWeek} / {zone==="daily"?"매일":maxPerWeek}회</div>
           </div>
           <div>
             <div className="form-label">연속 미내원 슬롯</div>
-            <div style={{fontSize:18, fontWeight:700, color: missedSlots >= 3 ? "var(--warn)" : "var(--ink)"}}>
-              {missedSlots}회 {missedSlots >= 3 && "⚠️"}
-            </div>
+            <div style={{fontSize:18, fontWeight:700, color:missedSlots>=3?"var(--warn)":"var(--ink)"}}>{missedSlots}회 {missedSlots>=3&&"⚠️"}</div>
           </div>
           <div>
             <div className="form-label">총 내원 횟수</div>
@@ -83,19 +140,13 @@ function VisitTab({ patient, visits, onVisitChange }) {
           </div>
         </div>
 
+        {/* 오늘 내원 버튼 */}
         {canTreat ? (
-          <button
-            className={`visit-btn ${todayVisited ? "visited" : "not-visited"}`}
-            style={{width:"100%", padding:"14px", fontSize:15}}
-            onClick={handleToggle}
-          >
-            {todayVisited ? "✅ 오늘 내원 확인됨 — 취소하려면 클릭" : "○ 내원 확인 클릭"}
+          <button className={`visit-btn ${todayVisited?"visited":"not-visited"}`} style={{width:"100%", padding:"14px", fontSize:15}} onClick={handleToggle}>
+            {todayVisited ? "✅ 오늘 내원 확인됨 — 취소하려면 클릭" : "○ 오늘 내원 확인 클릭"}
           </button>
         ) : (
-          <div style={{
-            background:"var(--surface2)", borderRadius:"var(--r-sm)", padding:"14px",
-            textAlign:"center", fontSize:14, color:"var(--ink-muted)", fontWeight:600,
-          }}>
+          <div style={{ background:"var(--surface2)", borderRadius:"var(--r-sm)", padding:"14px", textAlign:"center", fontSize:14, color:"var(--ink-muted)", fontWeight:600 }}>
             오늘은 치료 횟수를 모두 사용했습니다
           </div>
         )}
@@ -105,6 +156,15 @@ function VisitTab({ patient, visits, onVisitChange }) {
             ⚠️ 치료 가능 슬롯 {missedSlots}회 연속 미내원 — 환자 상태를 확인해주세요
           </div>
         )}
+
+        {/* 날짜 선택 내원 추가/삭제 */}
+        <div style={{marginTop:14, paddingTop:14, borderTop:"1px solid var(--border)"}}>
+          <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(!addingVisit)}>
+            📅 다른 날짜 내원 추가/삭제
+          </button>
+          <div style={{fontSize:11, color:"var(--ink-muted)", marginTop:4}}>누락된 내원 기록을 소급 입력하거나 삭제할 수 있습니다</div>
+          {addingVisit && <MiniCal />}
+        </div>
       </div>
 
       {/* 내원 기록 */}
@@ -118,13 +178,7 @@ function VisitTab({ patient, visits, onVisitChange }) {
         ) : (
           <div className="table-wrap">
             <table>
-              <thead>
-                <tr>
-                  <th>내원일</th>
-                  <th>치료 구간</th>
-                  <th>사고 후</th>
-                </tr>
-              </thead>
+              <thead><tr><th>내원일</th><th>치료 구간</th><th>사고 후</th><th></th></tr></thead>
               <tbody>
                 {recent.map(v => {
                   const { zone } = getTreatmentZone(patient.accident_date, v.visit_date, patient.is_severe);
@@ -134,6 +188,13 @@ function VisitTab({ patient, visits, onVisitChange }) {
                       <td><strong>{formatDate(v.visit_date)}</strong></td>
                       <td><ZoneBadge zone={zone} /></td>
                       <td style={{fontSize:12, color:"var(--ink-muted)"}}>+{daysSince}일</td>
+                      <td>
+                        <button className="btn btn-xs btn-danger" onClick={async () => {
+                          if (!window.confirm("이 내원 기록을 삭제하시겠습니까?")) return;
+                          await supabase.from("traffic_visits").delete().eq("id", v.id);
+                          onVisitChange();
+                        }}>삭제</button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -292,58 +353,74 @@ function InfoTab({ patient, onUpdate }) {
       <div className="card">
         <div className="section-header">
           <div className="section-title">💊 자보 한약 처방</div>
-          {patient.herb_prescribed_at && (
-            herbStatus.canPrescribe ? (
-              <span className="badge badge-info">처방 가능</span>
-            ) : (
-              <span className="badge badge-muted">D-{herbStatus.dDay}</span>
-            )
-          )}
+          <div style={{display:"flex", gap:6, alignItems:"center"}}>
+            {patient.herb_refused ? (
+              <span className="badge badge-muted">🚫 거부</span>
+            ) : patient.herb_prescribed_at ? (
+              herbStatus.canPrescribe ? <span className="badge badge-info">처방 가능</span> : <span className="badge badge-muted">D-{herbStatus.dDay}</span>
+            ) : null}
+          </div>
         </div>
 
-        {patient.herb_prescribed_at ? (
-          <div style={{marginBottom:16, padding:"12px 16px", background: herbStatus.canPrescribe ? "var(--info-pale)" : "var(--surface2)", borderRadius:"var(--r-sm)", border:`1.5px solid ${herbStatus.canPrescribe ? "var(--info)" : "var(--border)"}`}}>
-            <div style={{fontSize:12, color:"var(--ink-muted)", marginBottom:4}}>마지막 처방일</div>
-            <div style={{fontSize:16, fontWeight:700}}>{formatDate(patient.herb_prescribed_at)}</div>
-            {herbStatus.canPrescribe ? (
-              <div style={{fontSize:13, color:"var(--info)", fontWeight:600, marginTop:6}}>
-                💊 지금 처방 가능합니다 (7일 경과)
-              </div>
-            ) : (
-              <div style={{fontSize:13, color:"var(--ink-muted)", marginTop:6}}>
-                다음 처방 가능일: <strong>{formatDate(addDays(patient.herb_prescribed_at, 7))}</strong> (D-{herbStatus.dDay})
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="empty" style={{padding:12}}>처방 기록이 없습니다</div>
-        )}
-
-        <div style={{marginTop:12}}>
-          <label className="form-label" style={{marginBottom:6, display:"block"}}>
-            {patient.herb_prescribed_at ? "처방일 수정" : "처방일 입력"}
-          </label>
-          <div style={{display:"flex", gap:10, alignItems:"center"}}>
+        {/* 한약 거부 토글 */}
+        <div style={{marginBottom:16, padding:"12px 16px", background: patient.herb_refused ? "var(--warn-pale)" : "var(--surface2)", borderRadius:"var(--r-sm)", border:`1.5px solid ${patient.herb_refused?"#f5c6bd":"var(--border)"}`}}>
+          <label className="form-check" style={{cursor:"pointer"}}>
             <input
-              className="form-input"
-              type="date"
-              value={herbForm}
-              onChange={e => setHerbForm(e.target.value)}
-              style={{flex:1}}
-            />
-            <button className="btn btn-primary btn-sm" onClick={saveHerb} disabled={savingHerb}>
-              {savingHerb ? "저장 중..." : "저장"}
-            </button>
-            {patient.herb_prescribed_at && (
-              <button className="btn btn-danger btn-sm" onClick={async () => {
-                if (!window.confirm("자보 한약 처방 기록을 삭제하시겠습니까?")) return;
-                await supabase.from("traffic_patients").update({ herb_prescribed_at: null }).eq("id", patient.id);
-                setHerbForm("");
+              type="checkbox"
+              checked={patient.herb_refused || false}
+              onChange={async (e) => {
+                const newVal = e.target.checked;
+                if (!window.confirm(newVal ? "한약 거부로 설정하시겠습니까?" : "한약 거부를 해제하시겠습니까?")) return;
+                await supabase.from("traffic_patients").update({ herb_refused: newVal }).eq("id", patient.id);
                 onUpdate();
-              }}>삭제</button>
-            )}
-          </div>
+              }}
+              style={{width:16, height:16, cursor:"pointer", accentColor:"var(--warn)"}}
+            />
+            <span style={{color: patient.herb_refused ? "var(--warn)" : "var(--ink-muted)", fontWeight: patient.herb_refused ? 700 : 400}}>
+              🚫 한약 거부함
+            </span>
+            {patient.herb_refused && <span style={{fontSize:11, color:"var(--warn)", marginLeft:4}}>— 한약 처방 제외</span>}
+          </label>
         </div>
+
+        {/* 한약 거부 시 처방 섹션 비활성화 */}
+        {!patient.herb_refused && (
+          <>
+            {patient.herb_prescribed_at ? (
+              <div style={{marginBottom:16, padding:"12px 16px", background: herbStatus.canPrescribe ? "var(--info-pale)" : "var(--surface2)", borderRadius:"var(--r-sm)", border:`1.5px solid ${herbStatus.canPrescribe ? "var(--info)" : "var(--border)"}`}}>
+                <div style={{fontSize:12, color:"var(--ink-muted)", marginBottom:4}}>마지막 처방일</div>
+                <div style={{fontSize:16, fontWeight:700}}>{formatDate(patient.herb_prescribed_at)}</div>
+                {herbStatus.canPrescribe ? (
+                  <div style={{fontSize:13, color:"var(--info)", fontWeight:600, marginTop:6}}>💊 지금 처방 가능합니다 (7일 경과)</div>
+                ) : (
+                  <div style={{fontSize:13, color:"var(--ink-muted)", marginTop:6}}>다음 처방 가능일: <strong>{formatDate(addDays(patient.herb_prescribed_at, 7))}</strong> (D-{herbStatus.dDay})</div>
+                )}
+              </div>
+            ) : (
+              <div className="empty" style={{padding:12}}>처방 기록이 없습니다</div>
+            )}
+
+            <div style={{marginTop:12}}>
+              <label className="form-label" style={{marginBottom:6, display:"block"}}>
+                {patient.herb_prescribed_at ? "처방일 수정" : "처방일 입력"}
+              </label>
+              <div style={{display:"flex", gap:10, alignItems:"center"}}>
+                <input className="form-input" type="date" value={herbForm} onChange={e => setHerbForm(e.target.value)} style={{flex:1}} />
+                <button className="btn btn-primary btn-sm" onClick={saveHerb} disabled={savingHerb}>
+                  {savingHerb ? "저장 중..." : "저장"}
+                </button>
+                {patient.herb_prescribed_at && (
+                  <button className="btn btn-danger btn-sm" onClick={async () => {
+                    if (!window.confirm("자보 한약 처방 기록을 삭제하시겠습니까?")) return;
+                    await supabase.from("traffic_patients").update({ herb_prescribed_at: null }).eq("id", patient.id);
+                    setHerbForm("");
+                    onUpdate();
+                  }}>삭제</button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -432,6 +509,7 @@ function NewPatientModal({ onClose }) {
     accident_date: today(),
     herb_prescribed_at: "",
     is_severe: false,
+    herb_refused: false,
   });
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -446,6 +524,7 @@ function NewPatientModal({ onClose }) {
       accident_date: form.accident_date,
       herb_prescribed_at: form.herb_prescribed_at || null,
       is_severe: form.is_severe,
+      herb_refused: form.herb_refused,
       severe_updated_at: form.is_severe ? new Date().toISOString() : null,
     }]);
     if (error) { setErr(error.message); setLoading(false); return; }
@@ -484,13 +563,17 @@ function NewPatientModal({ onClose }) {
         {/* 중증 체크박스 */}
         <div style={{margin:"16px 0", padding:"12px 16px", background:"var(--traffic-pale)", borderRadius:"var(--r-sm)", border:"1.5px solid var(--traffic)"}}>
           <label className="form-check">
-            <input
-              type="checkbox"
-              checked={form.is_severe}
-              onChange={e => setForm({...form, is_severe: e.target.checked})}
-            />
+            <input type="checkbox" checked={form.is_severe} onChange={e => setForm({...form, is_severe: e.target.checked})} style={{width:16, height:16, cursor:"pointer", accentColor:"var(--traffic)"}} />
             <span style={{color:"var(--traffic)", fontWeight:700}}>🦴 골절 이상 중증 환자</span>
             <span style={{fontSize:12, color:"var(--ink-muted)", marginLeft:4}}>(4주차부터 주 3회 유지)</span>
+          </label>
+        </div>
+
+        {/* 한약 거부 체크박스 */}
+        <div style={{margin:"0 0 16px", padding:"12px 16px", background: form.herb_refused ? "var(--warn-pale)" : "var(--surface2)", borderRadius:"var(--r-sm)", border:`1.5px solid ${form.herb_refused?"#f5c6bd":"var(--border)"}`}}>
+          <label className="form-check">
+            <input type="checkbox" checked={form.herb_refused} onChange={e => setForm({...form, herb_refused: e.target.checked})} style={{width:16, height:16, cursor:"pointer", accentColor:"var(--warn)"}} />
+            <span style={{color: form.herb_refused ? "var(--warn)" : "var(--ink-muted)", fontWeight: form.herb_refused ? 700 : 400}}>🚫 한약 거부함</span>
           </label>
         </div>
 
@@ -639,10 +722,13 @@ export default function TrafficPatients({ currentUser, selectPatientId }) {
                   </div>
                   <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
                     {hasAlert && <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>}
-                    {herbStatus.canPrescribe && <span className="badge badge-info">💊 한약 처방 가능</span>}
-                    {!herbStatus.canPrescribe && herbStatus.dDay !== null && herbStatus.dDay > 0 && (
+                    {p.herb_refused ? (
+                      <span className="badge badge-muted">🚫 한약 거부</span>
+                    ) : herbStatus.canPrescribe ? (
+                      <span className="badge badge-info">💊 한약 처방 가능</span>
+                    ) : !herbStatus.canPrescribe && herbStatus.dDay !== null && herbStatus.dDay > 0 ? (
                       <span className="badge badge-muted">💊 D-{herbStatus.dDay}</span>
-                    )}
+                    ) : null}
                     <button className="btn btn-xs btn-danger" onClick={async e => {
                       e.stopPropagation();
                       if (!window.confirm(`${p.name} 환자를 삭제하시겠습니까?`)) return;
