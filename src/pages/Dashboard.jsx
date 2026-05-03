@@ -290,58 +290,84 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* 기한 지난 해피콜 */}
-      {pastCalls.length > 0 && (
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: "2px solid var(--border)" }}>
-            <span style={{ fontSize: 18 }}>⚠️</span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: "var(--warn)" }}>기한 지난 해피콜</span>
-            <span style={{ fontSize: 12, color: "var(--ink-muted)" }}>{pastCalls.length}건</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {pastCalls.map(item => (
-              <HappycallCard key={item.id} item={item} onToggle={handleToggle} onNoAnswer={handleNoAnswer} onNavigate={handleNavigateHappycall} />
-            ))}
-          </div>
-        </div>
-      )}
+      {/* 2컬럼 레이아웃 */}
+      <div className="dashboard-cols" style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 24,
+        alignItems: "start",
+      }}>
 
-      {/* 오늘 해피콜 */}
-      {todayCalls.length > 0 && (
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: "2px solid var(--border)" }}>
-            <span style={{ fontSize: 18 }}>📞</span>
-            <span style={{ fontSize: 16, fontWeight: 700 }}>오늘 해피콜</span>
-            <span style={{ fontSize: 12, color: "var(--ink-muted)" }}>{todayCalls.length}건</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {todayCalls.map(item => (
-              <HappycallCard key={item.id} item={item} onToggle={handleToggle} onNoAnswer={handleNoAnswer} onNavigate={handleNavigateHappycall} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 오늘 교통사고 치료 가능 */}
-      {trafficToday.length > 0 && (
-        <div style={{ marginBottom: 28 }}>
+        {/* 좌측 — 교통사고 환자 */}
+        <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: "2px solid var(--border)" }}>
             <span style={{ fontSize: 18 }}>🚗</span>
-            <span style={{ fontSize: 16, fontWeight: 700 }}>오늘 치료 가능한 교통사고 환자</span>
-            <span style={{ fontSize: 12, color: "var(--ink-muted)" }}>{trafficToday.length}명</span>
+            <span style={{ fontSize: 16, fontWeight: 700 }}>교통사고 환자</span>
+            <span style={{ fontSize: 12, color: "var(--ink-muted)" }}>
+              {trafficToday.length > 0 ? `오늘 치료 가능 ${trafficToday.length}명` : "오늘 치료 가능 없음"}
+            </span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {trafficToday.map(p => (
-              <TrafficTodayCard
-                key={p.id} patient={p}
-                visits={trafficVisits[p.id] || []}
-                onToggle={handleToggleVisit}
-                onNavigate={() => onSelectTrafficPatient(p.id)}
-              />
-            ))}
-          </div>
+          {trafficToday.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--ink-muted)", padding: "12px 0" }}>
+              오늘 치료 가능한 교통사고 환자가 없습니다
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {trafficToday.map(p => (
+                <TrafficTodayCard
+                  key={p.id} patient={p}
+                  visits={trafficVisits[p.id] || []}
+                  onToggle={handleToggleVisit}
+                  onNavigate={() => onSelectTrafficPatient(p.id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* 우측 — 해피콜 (기한 지난 것 → 오늘) */}
+        <div>
+          {/* 기한 지난 해피콜 */}
+          {pastCalls.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: "2px solid var(--border)" }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "var(--warn)" }}>기한 지난 해피콜</span>
+                <span style={{ fontSize: 12, color: "var(--ink-muted)" }}>{pastCalls.length}건</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {pastCalls.map(item => (
+                  <HappycallCard key={item.id} item={item} onToggle={handleToggle} onNoAnswer={handleNoAnswer} onNavigate={handleNavigateHappycall} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 오늘 해피콜 */}
+          {todayCalls.length > 0 && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: "2px solid var(--border)" }}>
+                <span style={{ fontSize: 18 }}>📞</span>
+                <span style={{ fontSize: 16, fontWeight: 700 }}>오늘 해피콜</span>
+                <span style={{ fontSize: 12, color: "var(--ink-muted)" }}>{todayCalls.length}건</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {todayCalls.map(item => (
+                  <HappycallCard key={item.id} item={item} onToggle={handleToggle} onNoAnswer={handleNoAnswer} onNavigate={handleNavigateHappycall} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 해피콜 없음 */}
+          {happycalls.length === 0 && (
+            <div style={{ fontSize: 13, color: "var(--ink-muted)", padding: "12px 0" }}>
+              오늘 처리할 해피콜이 없습니다
+            </div>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 }
