@@ -221,6 +221,7 @@ const styles = `
     .form-grid-3 { grid-template-columns: 1fr 1fr; }
     .patient-grid { grid-template-columns: 1fr; }
     .layout { flex-direction: column; }
+    .dashboard-cols { grid-template-columns: 1fr !important; }
   }
 `;
 
