@@ -5,6 +5,8 @@ import Dashboard from "./pages/Dashboard";
 import DietPatients from "./pages/DietPatients";
 import TangPatients from "./pages/TangPatients";
 import TrafficPatients from "./pages/TrafficPatients";
+import NewPatients from "./pages/NewPatients";
+import VisitStats from "./pages/VisitStats";
 import Notices from "./pages/Notices";
 import Plants from "./pages/Plants";
 import Admin from "./pages/Admin";
@@ -400,13 +402,15 @@ export default function App() {
   const showBackupAlert = currentUser?.role === "admin" && backupDays >= 30;
 
   const navItems = [
-    { key: "dashboard",  icon: "🏠", label: "대시보드" },
-    { key: "diet",       icon: "👥", label: "다이어트 환자" },
-    { key: "tang",       icon: "🌿", label: "탕약 환자" },
-    { key: "traffic",    icon: "🚗", label: "교통사고 환자" },
-    { key: "notices",    icon: "📋", label: "공지사항" },
-    { key: "plants",     icon: "🌱", label: "식물 관리" },
-    { key: "admin",      icon: "⚙️", label: "계정 관리" },
+    { key: "dashboard",   icon: "🏠", label: "대시보드" },
+    { key: "diet",        icon: "👥", label: "다이어트 환자" },
+    { key: "tang",        icon: "🌿", label: "탕약 환자" },
+    { key: "traffic",     icon: "🚗", label: "교통사고 환자" },
+    { key: "newpatients", icon: "🆕", label: "신환 관리" },
+    { key: "visitstats",  icon: "📊", label: "내원 현황" },
+    { key: "notices",     icon: "📋", label: "공지사항" },
+    { key: "plants",      icon: "🌱", label: "식물 관리" },
+    { key: "admin",       icon: "⚙️", label: "계정 관리" },
   ];
 
   return (
@@ -481,6 +485,12 @@ export default function App() {
               )}
               {page === "traffic" && (
                 <TrafficPatients currentUser={currentUser} />
+              )}
+              {page === "newpatients" && (
+                <NewPatients currentUser={currentUser} />
+              )}
+              {page === "visitstats" && (
+                <VisitStats currentUser={currentUser} />
               )}
               {page === "notices" && (
                 <Notices currentUser={currentUser} />
