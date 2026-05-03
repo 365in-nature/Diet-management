@@ -1391,7 +1391,7 @@ function NewPatientModal({ onClose }) {
 // =============================================
 // DIET PATIENTS PAGE
 // =============================================
-export default function DietPatients({ currentUser, selectPatientId, selectTab }) {
+export default function DietPatients({ currentUser, selectPatientId, selectTab, onMounted }) {
   const [patients, setPatients] = useState([]);
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -1428,13 +1428,15 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab }
 
   useEffect(() => { load(); }, [load]);
 
-  // 대시보드에서 직접 환자+탭 선택 시 처리
+  // 대시보드에서 직접 환자+탭 선택 시 처리 — 한 번만 실행 후 초기화
   useEffect(() => {
     if (selectPatientId && patients.length > 0) {
       const found = patients.find(p => p.id === selectPatientId);
       if (found) {
         setSelected(found);
         setInitialTab(selectTab || "prescription");
+        // 처리 후 부모에게 초기화 요청
+        if (onMounted) onMounted();
       }
     }
   }, [selectPatientId, patients, selectTab]);

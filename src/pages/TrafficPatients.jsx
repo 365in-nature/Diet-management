@@ -608,7 +608,7 @@ function NewPatientModal({ onClose }) {
 // =============================================
 // TRAFFIC PATIENTS PAGE
 // =============================================
-export default function TrafficPatients({ currentUser, selectPatientId }) {
+export default function TrafficPatients({ currentUser, selectPatientId, onMounted }) {
   const [patients, setPatients] = useState([]);
   const [visits, setVisits] = useState({});
   const [search, setSearch] = useState("");
@@ -653,11 +653,14 @@ export default function TrafficPatients({ currentUser, selectPatientId }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // 대시보드에서 직접 환자 선택 시 처리
+  // 대시보드에서 직접 환자 선택 시 처리 — 한 번만 실행 후 초기화
   useEffect(() => {
     if (selectPatientId && patients.length > 0) {
       const found = patients.find(p => p.id === selectPatientId);
-      if (found) setSelected(found);
+      if (found) {
+        setSelected(found);
+        if (onMounted) onMounted();
+      }
     }
   }, [selectPatientId, patients]);
 
