@@ -274,6 +274,11 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [currentUser, setCurrentUser] = useState(null);
   const [lastBackupAt, setLastBackupAt] = useState(null);
+  const [selectDietPatientId, setSelectDietPatientId] = useState(null);
+  const [selectDietTab, setSelectDietTab] = useState(null);
+  const [selectTangPatientId, setSelectTangPatientId] = useState(null);
+  const [selectTangTab, setSelectTangTab] = useState(null);
+  const [selectTrafficPatientId, setSelectTrafficPatientId] = useState(null);
 
   // 세션 초기화
   useEffect(() => {
@@ -475,16 +480,47 @@ export default function App() {
               )}
 
               {page === "dashboard" && (
-                <Dashboard currentUser={currentUser} onNavigate={setPage} />
+                <Dashboard
+                  currentUser={currentUser}
+                  onNavigate={setPage}
+                  onSelectDietPatient={(id, tab) => {
+                    setSelectDietPatientId(id);
+                    setSelectDietTab(tab);
+                    setPage("diet");
+                  }}
+                  onSelectTangPatient={(id, tab) => {
+                    setSelectTangPatientId(id);
+                    setSelectTangTab(tab);
+                    setPage("tang");
+                  }}
+                  onSelectTrafficPatient={(id) => {
+                    setSelectTrafficPatientId(id);
+                    setPage("traffic");
+                  }}
+                />
               )}
               {page === "diet" && (
-                <DietPatients currentUser={currentUser} />
+                <DietPatients
+                  currentUser={currentUser}
+                  selectPatientId={selectDietPatientId}
+                  selectTab={selectDietTab}
+                  onMounted={() => { setSelectDietPatientId(null); setSelectDietTab(null); }}
+                />
               )}
               {page === "tang" && (
-                <TangPatients currentUser={currentUser} />
+                <TangPatients
+                  currentUser={currentUser}
+                  selectPatientId={selectTangPatientId}
+                  selectTab={selectTangTab}
+                  onMounted={() => { setSelectTangPatientId(null); setSelectTangTab(null); }}
+                />
               )}
               {page === "traffic" && (
-                <TrafficPatients currentUser={currentUser} />
+                <TrafficPatients
+                  currentUser={currentUser}
+                  selectPatientId={selectTrafficPatientId}
+                  onMounted={() => setSelectTrafficPatientId(null)}
+                />
               )}
               {page === "newpatients" && (
                 <NewPatients currentUser={currentUser} />
