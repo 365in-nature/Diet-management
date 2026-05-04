@@ -240,6 +240,7 @@ export function getConsecutiveMissedSlots(accidentDate, isSevere, visitDates) {
   }
 
   // 오늘 주부터 역순으로 탐색하여 연속 미사용 슬롯 합산
+  // 마지막 내원 주(visitsThisWeek > 0인 주)는 잔여 슬롯 포함하지 않고 즉시 종료
   let totalMissed = 0;
 
   for (let i = weeks.length - 1; i >= 0; i--) {
@@ -253,11 +254,11 @@ export function getConsecutiveMissedSlots(accidentDate, isSevere, visitDates) {
     // 이 주의 실제 내원 횟수
     const visitsThisWeek = visitDates.filter(d => d >= weekStart && d <= weekEnd).length;
 
-    // 미사용 슬롯 합산
-    totalMissed += Math.max(0, maxPerWeek - visitsThisWeek);
-
-    // 내원 기록 있는 주 = 마지막 내원 주 → 탐색 종료
+    // 내원 기록 있는 주 = 마지막 내원 주 → 잔여 슬롯 카운트 없이 즉시 종료
     if (visitsThisWeek > 0) break;
+
+    // 내원 없는 주만 미사용 슬롯 합산
+    totalMissed += maxPerWeek;
   }
 
   return totalMissed;
