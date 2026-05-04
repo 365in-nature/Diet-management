@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import {
-  today, formatDate, isTodayOrPast, diffDays,
+  today, formatDate, isTodayOrPast, diffDays, addDays,
   canTreatToday, getConsecutiveMissedSlots, getHerbStatus,
+  getWeekRange, getTreatmentZone,
 } from "../lib/dateUtils";
 
 // =============================================
@@ -258,6 +259,22 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
   const herbStatus = getHerbStatus(patient.herb_prescribed_at);
   const isRefused = patient.herb_refused;
 
+  // 주기 및 이번 주 내원 횟수 계산
+  const { zone, maxPerWeek } = getTreatmentZone(patient.accident_date, targetDate, patient.is_severe);
+  const { start: weekStart, end: weekEnd } = getWeekRange(patient.accident_date, targetDate);
+  const visitsThisWeek = visitDates.filter(d => d >= weekStart && d <= weekEnd).length;
+
+  // 주기 요일 표시 (사고일 기준 주 시작~끝 요일)
+  const DOW = ["일","월","화","수","목","금","토"];
+  const weekStartDow = DOW[new Date(weekStart).getDay()];
+  const weekEndDow = DOW[new Date(weekEnd).getDay()];
+  const weekLabel = `${weekStartDow}~${weekEndDow}`;
+
+  // 횟수 배지 색상: 0회=빨강, 진행중=파랑, 다 온 경우는 카드 자체가 사라지므로 고려 불필요
+  const countBadgeStyle = visitsThisWeek === 0
+    ? { background:"var(--color-background-danger,#FCEBEB)", color:"var(--color-text-danger,#A32D2D)" }
+    : { background:"var(--color-background-success,#EAF3DE)", color:"var(--color-text-success,#3B6D11)" };
+
   return (
     <div style={{
       background:missedSlots>=3?"#fffaf9":"var(--surface)",
@@ -281,9 +298,16 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
               <span className="badge badge-muted">💊 D-{herbStatus.dDay}</span>
             ) : null}
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <span style={{ fontSize:16, fontWeight:700 }}>{patient.name}</span>
             <span style={{ fontSize:12, color:"var(--ink-muted)" }}>차트 #{patient.chart_number}</span>
+            <span style={{ fontSize:11, color:"var(--ink-muted)" }}>|</span>
+            <span style={{ fontSize:12, color:"var(--ink-muted)" }}>{weekLabel}</span>
+            {zone !== "daily" && (
+              <span style={{ fontSize:12, fontWeight:700, padding:"1px 8px", borderRadius:20, ...countBadgeStyle }}>
+                {visitsThisWeek}/{maxPerWeek}
+              </span>
+            )}
           </div>
         </div>
         <button
