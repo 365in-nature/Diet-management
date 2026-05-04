@@ -634,13 +634,13 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
       visitMap[v.patient_id].push(v);
     });
 
-    // 정렬: 3회 연속 미내원 → 오늘 치료 가능 → 나머지
+    // 정렬: 미내원 많은 순(내림차순) → 오늘 치료 가능 → 나머지
     const sorted = [...(pts || [])].sort((a, b) => {
       const aVisits = (visitMap[a.id] || []).map(v => v.visit_date);
       const bVisits = (visitMap[b.id] || []).map(v => v.visit_date);
-      const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits) >= 3 ? 0 : 1;
-      const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits) >= 3 ? 0 : 1;
-      if (aMissed !== bMissed) return aMissed - bMissed;
+      const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
+      const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits);
+      if (aMissed !== bMissed) return bMissed - aMissed; // 미내원 많은 순 내림차순
       const aCanTreat = canTreatToday(a.accident_date, a.is_severe, aVisits) ? 0 : 1;
       const bCanTreat = canTreatToday(b.accident_date, b.is_severe, bVisits) ? 0 : 1;
       return aCanTreat - bCanTreat;
