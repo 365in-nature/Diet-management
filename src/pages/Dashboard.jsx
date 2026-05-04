@@ -317,7 +317,8 @@ export default function Dashboard({
       const bVisits = (trafficVisits[b.id] || []).map(v => v.visit_date);
       const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
       const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits);
-      return bMissed - aMissed; // 미내원 많은 순 내림차순
+      if (bMissed !== aMissed) return bMissed - aMissed; // 1순위: 미내원 많은 순
+      return Number(b.chart_number) - Number(a.chart_number); // 2순위: 차트번호 높은 순
     });
 
   // 해피콜 완료 토글
