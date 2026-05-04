@@ -317,8 +317,11 @@ export default function Dashboard({
       const bVisits = (trafficVisits[b.id] || []).map(v => v.visit_date);
       const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
       const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits);
-      if (bMissed !== aMissed) return bMissed - aMissed; // 1순위: 미내원 많은 순
-      return Number(b.chart_number) - Number(a.chart_number); // 2순위: 차트번호 높은 순
+      const aAlert = aMissed >= 3 ? 1 : 0;
+      const bAlert = bMissed >= 3 ? 1 : 0;
+      if (bAlert !== aAlert) return bAlert - aAlert; // 1순위: 미내원 알림(3회↑) 환자 먼저
+      if (bAlert && aAlert && bMissed !== aMissed) return bMissed - aMissed; // 2순위: 알림 환자끼리는 미내원 많은 순
+      return Number(b.chart_number) - Number(a.chart_number); // 3순위: 나머지는 차트번호 높은 순
     });
 
   // 해피콜 완료 토글
