@@ -427,9 +427,134 @@ function InfoTab({ patient, onUpdate }) {
 }
 
 // =============================================
+// 전화 기록 탭
+// =============================================
+const CALL_STATUS = ["연락됨", "부재중", "예약변경", "내원예정", "합의", "기타"];
+
+function CallTab({ patient, currentUser }) {
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [status, setStatus] = useState("연락됨");
+  const [memo, setMemo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadCalls = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("traffic_missed_calls")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("called_at", { ascending: false });
+    setCalls(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadCalls(); }, [patient.id]);
+
+  const handleSave = async () => {
+    if (!memo.trim()) { alert("메모를 입력해주세요."); return; }
+    setSaving(true);
+    await supabase.from("traffic_missed_calls").insert([{
+      patient_id: patient.id,
+      called_at: new Date().toISOString(),
+      called_by: currentUser?.name || currentUser?.email || "Unknown",
+      status,
+      memo: memo.trim(),
+    }]);
+    setMemo("");
+    setStatus("연락됨");
+    setShowForm(false);
+    setSaving(false);
+    loadCalls();
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("이 전화 기록을 삭제하시겠습니까?")) return;
+    await supabase.from("traffic_missed_calls").delete().eq("id", id);
+    loadCalls();
+  };
+
+  const statusColor = (s) => ({
+    "연락됨": "var(--teal)", "부재중": "var(--warn)", "예약변경": "var(--info)",
+    "내원예정": "var(--accent)", "합의": "var(--gold)", "기타": "var(--ink-muted)",
+  }[s] || "var(--ink-muted)");
+
+  return (
+    <div>
+      <div className="card" style={{marginBottom:16}}>
+        <div className="section-header">
+          <div className="section-title">📞 전화 기록</div>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(v => !v)}>
+            {showForm ? "취소" : "+ 전화 기록 추가"}
+          </button>
+        </div>
+
+        {showForm && (
+          <div style={{background:"var(--surface2)", borderRadius:"var(--r-sm)", padding:16, marginBottom:16}}>
+            <div className="form-grid" style={{marginBottom:12}}>
+              <div className="form-group">
+                <label className="form-label">상태</label>
+                <select className="form-input" value={status} onChange={e => setStatus(e.target.value)}>
+                  {CALL_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="form-group" style={{marginBottom:12}}>
+              <label className="form-label">메모</label>
+              <textarea
+                className="form-input"
+                rows={3}
+                placeholder="통화 내용을 입력하세요..."
+                value={memo}
+                onChange={e => setMemo(e.target.value)}
+                style={{resize:"vertical"}}
+              />
+            </div>
+            <div className="form-actions">
+              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+                {saving ? "저장 중..." : "저장"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="empty">불러오는 중...</div>
+        ) : calls.length === 0 ? (
+          <div className="empty">전화 기록이 없습니다</div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:10}}>
+            {calls.map(c => (
+              <div key={c.id} style={{background:"var(--surface)", border:"1px solid var(--border)", borderRadius:"var(--r-sm)", padding:"12px 16px"}}>
+                <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6}}>
+                      <span style={{background:"var(--surface2)", color:statusColor(c.status), fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:20}}>
+                        {c.status}
+                      </span>
+                      <span style={{fontSize:12, color:"var(--ink-muted)"}}>
+                        {new Date(c.called_at).toLocaleDateString("ko-KR", {year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"})}
+                      </span>
+                      <span style={{fontSize:12, color:"var(--ink-muted)"}}>· {c.called_by}</span>
+                    </div>
+                    <div style={{fontSize:13, color:"var(--ink)", lineHeight:1.6, whiteSpace:"pre-wrap"}}>{c.memo}</div>
+                  </div>
+                  <button className="btn btn-xs btn-danger" onClick={() => handleDelete(c.id)}>삭제</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================
 // 환자 상세 페이지
 // =============================================
-function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack, onUpdate }) {
+function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack, onUpdate, currentUser }) {
   const [tab, setTab] = useState("visit");
   const [patient, setPatient] = useState(initialPatient);
   const [visits, setVisits] = useState(initialVisits);
@@ -486,6 +611,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
         {[
           { key: "visit", label: "① 내원 관리" },
           { key: "info",  label: "② 환자 정보" },
+          { key: "call",  label: "③ 전화 기록" },
         ].map(t => (
           <button key={t.key} className={`tab ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>
             {t.label}
@@ -495,6 +621,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
 
       {tab === "visit" && <VisitTab patient={patient} visits={visits} onVisitChange={refreshVisits} />}
       {tab === "info"  && <InfoTab patient={patient} onUpdate={refreshPatient} />}
+      {tab === "call"  && <CallTab patient={patient} currentUser={currentUser} />}
     </div>
   );
 }
@@ -615,12 +742,15 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [showClosed, setShowClosed] = useState(false);
+  const [closedPatients, setClosedPatients] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data: pts } = await supabase
       .from("traffic_patients")
       .select("*")
+      .eq("is_closed", false)
       .order("created_at", { ascending: false });
 
     const { data: vs } = await supabase
@@ -634,13 +764,13 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
       visitMap[v.patient_id].push(v);
     });
 
-    // 정렬: 미내원 많은 순(내림차순) → 오늘 치료 가능 → 나머지
+    // 정렬: 3회 연속 미내원 → 오늘 치료 가능 → 나머지
     const sorted = [...(pts || [])].sort((a, b) => {
       const aVisits = (visitMap[a.id] || []).map(v => v.visit_date);
       const bVisits = (visitMap[b.id] || []).map(v => v.visit_date);
-      const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
-      const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits);
-      if (aMissed !== bMissed) return bMissed - aMissed; // 미내원 많은 순 내림차순
+      const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits) >= 3 ? 0 : 1;
+      const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits) >= 3 ? 0 : 1;
+      if (aMissed !== bMissed) return aMissed - bMissed;
       const aCanTreat = canTreatToday(a.accident_date, a.is_severe, aVisits) ? 0 : 1;
       const bCanTreat = canTreatToday(b.accident_date, b.is_severe, bVisits) ? 0 : 1;
       return aCanTreat - bCanTreat;
@@ -648,6 +778,15 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
 
     setPatients(sorted);
     setVisits(visitMap);
+
+    // 종결 환자 별도 로드
+    const { data: closed } = await supabase
+      .from("traffic_patients")
+      .select("*")
+      .eq("is_closed", true)
+      .order("created_at", { ascending: false });
+    setClosedPatients(closed || []);
+
     setLoading(false);
   }, []);
 
@@ -686,6 +825,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
         visits={visits[selected.id] || []}
         onBack={() => { setSelected(null); load(); }}
         onUpdate={load}
+        currentUser={currentUser}
       />
     );
   }
@@ -698,7 +838,12 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
       </div>
       <div className="toolbar">
         <input className="search-input" placeholder="이름 또는 차트번호 검색" value={search} onChange={e => setSearch(e.target.value)} />
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ 신규 환자 등록</button>
+        <div style={{display:"flex", gap:8}}>
+          <button className="btn btn-secondary" onClick={() => setShowClosed(v => !v)}>
+            {showClosed ? "▲ 종결 환자 숨기기" : `📁 종결 환자 (${closedPatients.length}명)`}
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ 신규 환자 등록</button>
+        </div>
       </div>
 
       {loading ? <div className="empty">불러오는 중...</div> : (
@@ -732,6 +877,12 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
                     ) : !herbStatus.canPrescribe && herbStatus.dDay !== null && herbStatus.dDay > 0 ? (
                       <span className="badge badge-muted">💊 D-{herbStatus.dDay}</span>
                     ) : null}
+                    <button className="btn btn-xs btn-secondary" onClick={async e => {
+                      e.stopPropagation();
+                      if (!window.confirm(`${p.name} 환자를 종결 처리하시겠습니까?\n종결 후 목록에서 숨겨지며 복원 가능합니다.`)) return;
+                      await supabase.from("traffic_patients").update({ is_closed: true }).eq("id", p.id);
+                      load();
+                    }}>종결</button>
                     <button className="btn btn-xs btn-danger" onClick={async e => {
                       e.stopPropagation();
                       if (!window.confirm(`${p.name} 환자를 삭제하시겠습니까?`)) return;
@@ -763,6 +914,42 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
             );
           })}
           {filtered.length === 0 && <div className="empty">등록된 환자가 없습니다</div>}
+        </div>
+      )}
+
+      {/* 종결 환자 목록 */}
+      {showClosed && (
+        <div style={{marginTop:24}}>
+          <div style={{fontSize:14, fontWeight:700, color:"var(--ink-muted)", marginBottom:12, paddingBottom:8, borderBottom:"2px solid var(--border)"}}>
+            📁 종결 환자 ({closedPatients.length}명)
+          </div>
+          {closedPatients.length === 0 ? (
+            <div className="empty">종결 처리된 환자가 없습니다</div>
+          ) : (
+            <div className="patient-grid">
+              {closedPatients.map(p => (
+                <div key={p.id} className="patient-card" style={{opacity:0.7}}>
+                  <div className="patient-card-header">
+                    <div>
+                      <div className="patient-name">{p.name}</div>
+                      <div className="patient-chart">차트 #{p.chart_number}</div>
+                      <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:4}}>
+                        사고일 {formatDate(p.accident_date)}
+                      </div>
+                    </div>
+                    <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
+                      <span className="badge badge-muted">종결</span>
+                      <button className="btn btn-xs btn-secondary" onClick={async () => {
+                        if (!window.confirm(`${p.name} 환자를 복원하시겠습니까?`)) return;
+                        await supabase.from("traffic_patients").update({ is_closed: false }).eq("id", p.id);
+                        load();
+                      }}>복원</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

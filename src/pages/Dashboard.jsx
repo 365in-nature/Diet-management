@@ -65,6 +65,118 @@ function MiniCalendar({ selectedDate, onSelect }) {
 }
 
 // =============================================
+// 미내원 전화 기록 모달
+// =============================================
+const CALL_STATUS = ["연락됨", "부재중", "예약변경", "내원예정", "합의", "기타"];
+
+function MissedCallModal({ patient, currentUser, onClose }) {
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("연락됨");
+  const [memo, setMemo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadCalls = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("traffic_missed_calls")
+      .select("*")
+      .eq("patient_id", patient.id)
+      .order("called_at", { ascending: false })
+      .limit(5);
+    setCalls(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadCalls(); }, [patient.id]);
+
+  const handleSave = async () => {
+    if (!memo.trim()) { alert("메모를 입력해주세요."); return; }
+    setSaving(true);
+    await supabase.from("traffic_missed_calls").insert([{
+      patient_id: patient.id,
+      called_at: new Date().toISOString(),
+      called_by: currentUser?.name || currentUser?.email || "Unknown",
+      status,
+      memo: memo.trim(),
+    }]);
+    setMemo("");
+    setStatus("연락됨");
+    setSaving(false);
+    loadCalls();
+  };
+
+  const statusColor = (s) => ({
+    "연락됨": "var(--teal)", "부재중": "var(--warn)", "예약변경": "var(--info)",
+    "내원예정": "var(--accent)", "합의": "var(--gold)", "기타": "var(--ink-muted)",
+  }[s] || "var(--ink-muted)");
+
+  return (
+    <div style={{position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:16}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{background:"var(--surface)", borderRadius:"var(--r)", padding:24, width:"100%", maxWidth:480, maxHeight:"80vh", overflowY:"auto", boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16}}>
+          <div>
+            <div style={{fontSize:16, fontWeight:700}}>📞 전화 기록</div>
+            <div style={{fontSize:13, color:"var(--ink-muted)"}}>{patient.name} · 차트 #{patient.chart_number}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none", border:"none", fontSize:20, cursor:"pointer", color:"var(--ink-muted)"}}>✕</button>
+        </div>
+
+        {/* 새 기록 입력 */}
+        <div style={{background:"var(--surface2)", borderRadius:"var(--r-sm)", padding:16, marginBottom:16}}>
+          <div style={{marginBottom:10}}>
+            <div className="form-label" style={{marginBottom:6}}>상태</div>
+            <select className="form-input" value={status} onChange={e => setStatus(e.target.value)}>
+              {CALL_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div style={{marginBottom:10}}>
+            <div className="form-label" style={{marginBottom:6}}>메모</div>
+            <textarea
+              className="form-input"
+              rows={3}
+              placeholder="통화 내용을 입력하세요..."
+              value={memo}
+              onChange={e => setMemo(e.target.value)}
+              style={{resize:"vertical"}}
+            />
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving} style={{width:"100%"}}>
+            {saving ? "저장 중..." : "저장"}
+          </button>
+        </div>
+
+        {/* 최근 기록 */}
+        <div style={{fontSize:12, fontWeight:700, color:"var(--ink-muted)", marginBottom:8}}>최근 전화 기록</div>
+        {loading ? (
+          <div style={{fontSize:13, color:"var(--ink-muted)", textAlign:"center", padding:12}}>불러오는 중...</div>
+        ) : calls.length === 0 ? (
+          <div style={{fontSize:13, color:"var(--ink-muted)", textAlign:"center", padding:12}}>전화 기록이 없습니다</div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:8}}>
+            {calls.map(c => (
+              <div key={c.id} style={{background:"var(--surface)", border:"1px solid var(--border)", borderRadius:"var(--r-sm)", padding:"10px 14px"}}>
+                <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4}}>
+                  <span style={{color:statusColor(c.status), fontSize:11, fontWeight:700, background:"var(--surface2)", padding:"2px 8px", borderRadius:20}}>
+                    {c.status}
+                  </span>
+                  <span style={{fontSize:11, color:"var(--ink-muted)"}}>
+                    {new Date(c.called_at).toLocaleDateString("ko-KR", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"})}
+                  </span>
+                  <span style={{fontSize:11, color:"var(--ink-muted)"}}>· {c.called_by}</span>
+                </div>
+                <div style={{fontSize:13, color:"var(--ink)", whiteSpace:"pre-wrap"}}>{c.memo}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================
 // 해피콜 카드
 // =============================================
 function HappycallCard({ item, onToggle, onNoAnswer, onNavigate }) {
@@ -140,7 +252,7 @@ function HappycallCard({ item, onToggle, onNoAnswer, onNavigate }) {
 // =============================================
 // 교통사고 내원 카드
 // =============================================
-function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate }) {
+function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, onCallLog }) {
   const visitDates = visits.map(v => v.visit_date);
   const dateVisited = visitDates.includes(targetDate);
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
@@ -156,7 +268,12 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate })
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
         <div>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
-            {missedSlots >= 3 && <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>}
+            {missedSlots >= 3 && (
+              <div style={{display:"flex", alignItems:"center", gap:6}}>
+                <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>
+                <button className="btn btn-xs btn-secondary" onClick={e => { e.stopPropagation(); onCallLog(patient); }}>📞 전화기록</button>
+              </div>
+            )}
             {isRefused ? (
               <span className="badge badge-muted">🚫 한약 거부</span>
             ) : herbStatus.canPrescribe ? (
@@ -194,6 +311,7 @@ export default function Dashboard({
   const [trafficVisits, setTrafficVisits] = useState({});
   const [selectedDate, setSelectedDate] = useState(today());
   const [showCalendar, setShowCalendar] = useState(false);
+  const [callModalPatient, setCallModalPatient] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -442,6 +560,7 @@ export default function Dashboard({
                   targetDate={selectedDate}
                   onToggle={handleToggleVisit}
                   onNavigate={() => onSelectTrafficPatient(p.id)}
+                  onCallLog={setCallModalPatient}
                 />
               ))}
             </div>
@@ -484,6 +603,13 @@ export default function Dashboard({
         </div>
 
       </div>
+      {callModalPatient && (
+        <MissedCallModal
+          patient={callModalPatient}
+          currentUser={currentUser}
+          onClose={() => setCallModalPatient(null)}
+        />
+      )}
     </div>
   );
 }
