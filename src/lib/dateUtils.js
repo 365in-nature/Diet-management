@@ -207,53 +207,60 @@ export function canTreatToday(accidentDate, isSevere, visitDates, targetDate = t
 }
 
 /**
- * 치료 가능 슬롯 기준 연속 미내원 횟수 계산
+ * 마지막 내원일 기준 연속 미사용 슬롯 수 계산
+ * - 초진(내원 기록 없음) 환자는 0 반환
+ * - 마지막 내원일이 속한 주부터 오늘 주까지 역순으로 탐색
+ * - 주별 (maxPerWeek - 실제내원수) 를 합산, 내원 있는 주에서 중단
+ * - daily 구간 진입 시 중단 (주 단위 계산 불필요)
  * @param {string} accidentDate  - 사고일
  * @param {boolean} isSevere     - 중증 여부
  * @param {string[]} visitDates  - 내원 날짜 목록
- * @returns {number} 연속 미내원 슬롯 수
+ * @returns {number} 연속 미사용 슬롯 수
  */
 export function getConsecutiveMissedSlots(accidentDate, isSevere, visitDates) {
   const todayStr = today();
-  const acc = new Date(accidentDate);
-  const tgt = new Date(todayStr);
-  const totalDays = Math.floor((tgt - acc) / (1000 * 60 * 60 * 24));
 
-  if (totalDays < 0) return 0;
+  // 내원 기록 없으면 0 (초진 환자 알림 없음)
+  if (!visitDates || visitDates.length === 0) return 0;
 
-  // 사고일부터 오늘까지 치료 가능 슬롯 목록 생성
-  const slots = [];
-  const weekVisitCount = {}; // key: weekStart, value: count
+  // 마지막 내원일
+  const lastVisitDate = [...visitDates].sort().at(-1);
 
-  for (let i = 0; i <= totalDays; i++) {
-    const d = new Date(acc);
-    d.setDate(acc.getDate() + i);
-    const dateStr = d.toISOString().split("T")[0];
-    const { zone, maxPerWeek } = getTreatmentZone(accidentDate, dateStr, isSevere);
+  // 마지막 내원일이 오늘이면 0 (오늘 내원 시 즉시 해제)
+  if (lastVisitDate >= todayStr) return 0;
 
-    if (zone === "before") continue;
+  // 마지막 내원 주 ~ 오늘 주까지 주 시작일 목록 수집 (오래된 순)
+  const weeks = [];
+  let cursor = getWeekRange(accidentDate, lastVisitDate).start;
+  const todayWeekStart = getWeekRange(accidentDate, todayStr).start;
 
-    if (zone === "daily") {
-      slots.push(dateStr);
-    } else {
-      // 주 단위 슬롯: 해당 주에 maxPerWeek개까지만 슬롯 추가
-      const { start } = getWeekRange(accidentDate, dateStr);
-      if (!weekVisitCount[start]) weekVisitCount[start] = 0;
-      if (weekVisitCount[start] < maxPerWeek) {
-        slots.push(dateStr);
-        weekVisitCount[start]++;
-      }
-    }
+  while (cursor <= todayWeekStart) {
+    weeks.push(cursor);
+    cursor = addDays(cursor, 7);
   }
 
-  // 슬롯 기준 연속 미내원 계산 (뒤에서부터)
-  let consecutive = 0;
-  for (let i = slots.length - 1; i >= 0; i--) {
-    if (visitDates.includes(slots[i])) break;
-    consecutive++;
+  // 오늘 주부터 역순으로 탐색하여 연속 미사용 슬롯 합산
+  let totalMissed = 0;
+
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    const weekStart = weeks[i];
+    const weekEnd = addDays(weekStart, 6);
+    const { zone, maxPerWeek } = getTreatmentZone(accidentDate, weekStart, isSevere);
+
+    // daily 구간이나 before 구간은 주 단위 계산 대상 아님 → 중단
+    if (zone === "before" || zone === "daily") break;
+
+    // 이 주의 실제 내원 횟수
+    const visitsThisWeek = visitDates.filter(d => d >= weekStart && d <= weekEnd).length;
+
+    // 미사용 슬롯 합산
+    totalMissed += Math.max(0, maxPerWeek - visitsThisWeek);
+
+    // 내원 기록 있는 주 = 마지막 내원 주 → 탐색 종료
+    if (visitsThisWeek > 0) break;
   }
 
-  return consecutive;
+  return totalMissed;
 }
 
 /**
