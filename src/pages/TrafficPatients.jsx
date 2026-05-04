@@ -453,14 +453,13 @@ function CallTab({ patient, currentUser }) {
   useEffect(() => { loadCalls(); }, [patient.id]);
 
   const handleSave = async () => {
-    if (!memo.trim()) { alert("메모를 입력해주세요."); return; }
     setSaving(true);
     await supabase.from("traffic_missed_calls").insert([{
       patient_id: patient.id,
       called_at: new Date().toISOString(),
       called_by: currentUser?.name || currentUser?.email || "Unknown",
       status,
-      memo: memo.trim(),
+      memo: memo.trim() || null,
     }]);
     setMemo("");
     setStatus("연락됨");
@@ -601,6 +600,20 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
             {herbStatus.canPrescribe && <span className="badge badge-info">💊 한약 처방 가능</span>}
             {!herbStatus.canPrescribe && herbStatus.dDay !== null && herbStatus.dDay > 0 && (
               <span className="badge badge-muted">💊 한약 D-{herbStatus.dDay}</span>
+            )}
+            {patient.is_closed ? (
+              <button className="btn btn-sm btn-secondary" onClick={async () => {
+                if (!window.confirm(`${patient.name} 환자를 복원하시겠습니까?`)) return;
+                await supabase.from("traffic_patients").update({ is_closed: false }).eq("id", patient.id);
+                await refreshPatient();
+                onBack();
+              }}>🔄 종결 복원</button>
+            ) : (
+              <button className="btn btn-sm btn-danger" onClick={async () => {
+                if (!window.confirm(`${patient.name} 환자를 종결 처리하시겠습니까?\n종결 후 목록에서 숨겨지며 복원 가능합니다.`)) return;
+                await supabase.from("traffic_patients").update({ is_closed: true }).eq("id", patient.id);
+                onBack();
+              }}>🔒 치료 종결</button>
             )}
           </div>
         </div>

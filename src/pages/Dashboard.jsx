@@ -91,14 +91,13 @@ function MissedCallModal({ patient, currentUser, onClose }) {
   useEffect(() => { loadCalls(); }, [patient.id]);
 
   const handleSave = async () => {
-    if (!memo.trim()) { alert("메모를 입력해주세요."); return; }
     setSaving(true);
     await supabase.from("traffic_missed_calls").insert([{
       patient_id: patient.id,
       called_at: new Date().toISOString(),
       called_by: currentUser?.name || currentUser?.email || "Unknown",
       status,
-      memo: memo.trim(),
+      memo: memo.trim() || null,
     }]);
     setMemo("");
     setStatus("연락됨");
@@ -334,8 +333,8 @@ export default function Dashboard({
       .select("*, tang_patients(id, name, chart_number), tang_happycall_logs(*), tang_prescription_updates(*)")
       .eq("is_completed", false);
 
-    // 교통사고 환자
-    const { data: trPatients } = await supabase.from("traffic_patients").select("*").order("created_at", { ascending: false });
+    // 교통사고 환자 (종결 제외)
+    const { data: trPatients } = await supabase.from("traffic_patients").select("*").eq("is_closed", false).order("created_at", { ascending: false });
     const { data: trVisits } = await supabase.from("traffic_visits").select("*").order("visit_date", { ascending: false });
 
     const visitMap = {};
