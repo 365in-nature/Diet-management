@@ -306,11 +306,19 @@ export default function Dashboard({
 
   useEffect(() => { load(); }, [load]);
 
-  // 선택 날짜 기준 교통사고 치료 가능 환자
-  const trafficToday = trafficPatients.filter(p => {
-    const visits = (trafficVisits[p.id] || []).map(v => v.visit_date);
-    return canTreatToday(p.accident_date, p.is_severe, visits, selectedDate);
-  });
+  // 선택 날짜 기준 교통사고 치료 가능 환자 — 미내원 많은 순 정렬
+  const trafficToday = trafficPatients
+    .filter(p => {
+      const visits = (trafficVisits[p.id] || []).map(v => v.visit_date);
+      return canTreatToday(p.accident_date, p.is_severe, visits, selectedDate);
+    })
+    .sort((a, b) => {
+      const aVisits = (trafficVisits[a.id] || []).map(v => v.visit_date);
+      const bVisits = (trafficVisits[b.id] || []).map(v => v.visit_date);
+      const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
+      const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits);
+      return bMissed - aMissed; // 미내원 많은 순 내림차순
+    });
 
   // 해피콜 완료 토글
   const handleToggle = async (item) => {
