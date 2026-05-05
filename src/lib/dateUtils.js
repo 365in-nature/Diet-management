@@ -172,8 +172,8 @@ export function getTreatmentZone(accidentDate, targetDate, isSevere = false) {
     return { zone: "week3", maxPerWeek: 3 };
   }
 
-  // 11주~6개월(26주): 주 2회
-  if (diffWeeks < 26) {
+  // 11주~6개월(24주): 주 2회
+  if (diffWeeks < 24) {
     return { zone: "week2", maxPerWeek: 2 };
   }
 
