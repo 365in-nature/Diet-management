@@ -143,6 +143,12 @@ export function getWeekRange(accidentDate, targetDate) {
  * @returns {{ zone: string, maxPerWeek: number | 'daily' }}
  *   zone: 'daily' | 'week3' | 'week2' | 'week1'
  *   maxPerWeek: 7(매일) | 3 | 2 | 1
+ *
+ * [구간 기준 - 사고일로부터 경과 일수]
+ *   0~20일   (1일~3주)    : 매일
+ *   21~76일  (4주~11주)   : 주 3회
+ *   77~167일 (12주~24주)  : 주 2회
+ *   168일~   (24주 초과)  : 주 1회
  */
 export function getTreatmentZone(accidentDate, targetDate, isSevere = false) {
   const acc = new Date(accidentDate);
@@ -150,35 +156,15 @@ export function getTreatmentZone(accidentDate, targetDate, isSevere = false) {
   const diffMs = tgt - acc;
   const diffDaysVal = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffDaysVal < 0) {
-    return { zone: "before", maxPerWeek: 0 };
-  }
-
-  const diffWeeks = diffDaysVal / 7;
-
-  // 0~3주 (21일): 매일
-  if (diffDaysVal < 21) {
-    return { zone: "daily", maxPerWeek: 7 };
-  }
+  if (diffDaysVal < 0)   return { zone: "before", maxPerWeek: 0 };
+  if (diffDaysVal < 21)  return { zone: "daily",  maxPerWeek: 7 };
 
   // 중증 환자: 3주 이후 계속 주 3회
-  if (isSevere) {
-    return { zone: "week3", maxPerWeek: 3 };
-  }
+  if (isSevere)          return { zone: "week3",  maxPerWeek: 3 };
 
-  // 일반 환자
-  // 3주~11주: 주 3회
-  if (diffWeeks < 12) {
-    return { zone: "week3", maxPerWeek: 3 };
-  }
-
-  // 12주~24주(24주): 주 2회
-  if (diffWeeks < 25) {
-    return { zone: "week2", maxPerWeek: 2 };
-  }
-
-  // 24주 이상: 주 1회
-  return { zone: "week1", maxPerWeek: 1 };
+  if (diffDaysVal < 77)  return { zone: "week3",  maxPerWeek: 3 };
+  if (diffDaysVal < 168) return { zone: "week2",  maxPerWeek: 2 };
+                         return { zone: "week1",  maxPerWeek: 1 };
 }
 
 /**
