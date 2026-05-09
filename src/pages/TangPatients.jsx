@@ -7,6 +7,14 @@ import {
 } from "../lib/dateUtils";
 
 // =============================================
+// 패키지 개월수를 보기 좋게 표시하는 헬퍼
+// =============================================
+function formatPackageMonths(months) {
+  if (Number(months) === 0.5) return "15일";
+  return `${months}개월`;
+}
+
+// =============================================
 // 처방 기간 선택 버튼
 // =============================================
 function DoseSelector({ value, onChange }) {
@@ -255,20 +263,24 @@ function TangPrescriptionTab({ patient }) {
         {pkgs.length > 0 ? (
           <div>
             <div className="pkg-status" style={{marginBottom:8}}>
-              {Array.from({length: totalMonths}).map((_, i) => (
-                <div key={i} className={`pkg-month ${i < usedMonths ? "pkg-month-done" : "pkg-month-remaining"}`}>
-                  {i < usedMonths ? "✓" : `${i+1}M`}
-                </div>
-              ))}
+              {Array.from({length: Math.ceil(totalMonths * 2)}).map((_, i) => {
+                const halfIdx = i; // 0.5 단위 인덱스
+                const isDone = halfIdx < usedMonths * 2;
+                return (
+                  <div key={i} className={`pkg-month ${isDone ? "pkg-month-done" : "pkg-month-remaining"}`}>
+                    {isDone ? "✓" : `${i * 0.5 + 0.5}M`}
+                  </div>
+                );
+              })}
               <div style={{marginLeft:8, fontSize:13, color:"var(--ink-muted)", alignSelf:"center"}}>
-                잔여 <strong style={{color:"var(--teal)"}}>약 {remainingMonths}개월</strong>
+                잔여 <strong style={{color:"var(--teal)"}}>약 {remainingMonths === 0.5 ? "15일" : `${remainingMonths}개월`}</strong>
                 <span style={{color:"var(--ink-muted)", marginLeft:4}}>({remainingDays}일)</span>
               </div>
             </div>
             <div style={{display:"flex", gap:16, flexWrap:"wrap", fontSize:13, marginBottom:12}}>
               <div><span style={{color:"var(--ink-muted)"}}>시작일 </span><strong>{formatDate(firstStart)}</strong></div>
               <div><span style={{color:"var(--ink-muted)"}}>종료일 </span><strong style={{color:"var(--warn)"}}>{formatDate(endDate)}</strong></div>
-              <div><span style={{color:"var(--ink-muted)"}}>총 </span><strong>{totalMonths}개월</strong></div>
+              <div><span style={{color:"var(--ink-muted)"}}>총 </span><strong>{formatPackageMonths(totalMonths)}</strong></div>
             </div>
             {pkgs.map((p, i) => (
               <div key={p.id} style={{display:"flex", alignItems:"center", gap:10, fontSize:13, background:"var(--surface2)", borderRadius:8, padding:"8px 12px", border:"1px solid var(--border)", marginBottom:6}}>
@@ -276,7 +288,7 @@ function TangPrescriptionTab({ patient }) {
                 <span style={{color:"var(--ink-muted)"}}>시작일</span>
                 <strong>{formatDate(p.start_date)}</strong>
                 <span>·</span>
-                <strong>{p.package_months}개월</strong>
+                <strong>{formatPackageMonths(p.package_months)}</strong>
                 <button className="btn btn-xs btn-danger" style={{marginLeft:"auto"}} onClick={() => deletePkg(p.id)}>삭제</button>
               </div>
             ))}
@@ -289,7 +301,7 @@ function TangPrescriptionTab({ patient }) {
               <div className="form-group">
                 <label className="form-label">패키지 종류</label>
                 <select className="form-select" value={pkgForm.package_months} onChange={e => setPkgForm({...pkgForm, package_months: e.target.value})}>
-                  {[1,2,3,4,5,6,9,12].map(m => <option key={m} value={m}>{m}개월</option>)}
+                  {[0.5,1,2,3,4,5,6,9,12].map(m => <option key={m} value={m}>{formatPackageMonths(m)}</option>)}
                 </select>
               </div>
               <div className="form-group">
@@ -582,7 +594,7 @@ export default function TangPatients({ currentUser, selectPatientId, selectTab, 
                 </div>
                 {pkg && (
                   <div style={{marginTop:8}}>
-                    <span className="badge badge-teal">{pkg.package_months}개월 패키지</span>
+                    <span className="badge badge-teal">{formatPackageMonths(pkg.package_months)} 패키지</span>
                   </div>
                 )}
               </div>
