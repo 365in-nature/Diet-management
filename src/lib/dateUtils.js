@@ -193,11 +193,16 @@ export function canTreatToday(accidentDate, isSevere, visitDates, targetDate = t
 }
 
 /**
- * 마지막 내원일 기준 연속 미사용 슬롯 수 계산
+ * 연속 미사용 슬롯 수 계산
+ *
+ * [변경 사항]
+ * - 이번 주(진행 중인 주)는 집계에서 완전히 제외
+ *   → 아직 내원 기회가 남아있는 주를 미내원으로 카운트하지 않음
+ * - 완전히 끝난 주에 한해 잔여 슬롯(maxPerWeek - visitsThisWeek) 포함
+ *   → 지난주 일요일 1회 내원 시 잔여 2슬롯도 미내원으로 카운트
+ * - daily / before 구간은 집계 제외
  * - 초진(내원 기록 없음) 환자는 0 반환
- * - 마지막 내원일이 속한 주부터 오늘 주까지 역순으로 탐색
- * - 주별 (maxPerWeek - 실제내원수) 를 합산, 내원 있는 주에서 중단
- * - daily 구간 진입 시 중단 (주 단위 계산 불필요)
+ *
  * @param {string} accidentDate  - 사고일
  * @param {boolean} isSevere     - 중증 여부
  * @param {string[]} visitDates  - 내원 날짜 목록
@@ -215,18 +220,22 @@ export function getConsecutiveMissedSlots(accidentDate, isSevere, visitDates) {
   // 마지막 내원일이 오늘이면 0 (오늘 내원 시 즉시 해제)
   if (lastVisitDate >= todayStr) return 0;
 
-  // 마지막 내원 주 ~ 오늘 주까지 주 시작일 목록 수집 (오래된 순)
-  const weeks = [];
-  let cursor = getWeekRange(accidentDate, lastVisitDate).start;
+  // 이번 주 시작일 — 이번 주는 집계에서 제외
   const todayWeekStart = getWeekRange(accidentDate, todayStr).start;
 
-  while (cursor <= todayWeekStart) {
+  // 마지막 내원 주 ~ 이번 주 직전 주까지 목록 수집 (오래된 순)
+  const weeks = [];
+  let cursor = getWeekRange(accidentDate, lastVisitDate).start;
+  const lastClosedWeekStart = addDays(todayWeekStart, -7); // 이번 주 제외, 직전 주까지만
+
+  while (cursor <= lastClosedWeekStart) {
     weeks.push(cursor);
     cursor = addDays(cursor, 7);
   }
 
-  // 오늘 주부터 역순으로 탐색하여 연속 미사용 슬롯 합산
-  // 마지막 내원 주(visitsThisWeek > 0인 주)는 잔여 슬롯 포함하지 않고 즉시 종료
+  // 직전 주부터 역순으로 탐색하여 연속 미사용 슬롯 합산
+  // - 내원 있는 주: 잔여 슬롯(maxPerWeek - visitsThisWeek) 더한 뒤 즉시 종료
+  // - 내원 없는 주: maxPerWeek 전체 합산 후 계속 탐색
   let totalMissed = 0;
 
   for (let i = weeks.length - 1; i >= 0; i--) {
@@ -234,20 +243,74 @@ export function getConsecutiveMissedSlots(accidentDate, isSevere, visitDates) {
     const weekEnd = addDays(weekStart, 6);
     const { zone, maxPerWeek } = getTreatmentZone(accidentDate, weekStart, isSevere);
 
-    // daily 구간이나 before 구간은 주 단위 계산 대상 아님 → 중단
+    // daily / before 구간은 주 단위 계산 대상 아님 → 중단
     if (zone === "before" || zone === "daily") break;
 
     // 이 주의 실제 내원 횟수
     const visitsThisWeek = visitDates.filter(d => d >= weekStart && d <= weekEnd).length;
 
-    // 내원 기록 있는 주 = 마지막 내원 주 → 잔여 슬롯 카운트 없이 즉시 종료
-    if (visitsThisWeek > 0) break;
+    if (visitsThisWeek > 0) {
+      // 내원 있는 주 = 마지막 내원 주 → 잔여 슬롯만 더하고 종료
+      totalMissed += maxPerWeek - visitsThisWeek;
+      break;
+    }
 
-    // 내원 없는 주만 미사용 슬롯 합산
+    // 내원 없는 주 → 슬롯 전체 합산 후 계속 탐색
     totalMissed += maxPerWeek;
   }
 
   return totalMissed;
+}
+
+/**
+ * 이번 주 내원 독려 알림 상태 반환
+ *
+ * 조건: (이번 주 잔여 슬롯 + 1) > 이번 주 오늘 포함 남은 날
+ * → 남은 날이 촉박해서 슬롯을 다 채우기 어려울 때 독려
+ *
+ * [구간별 독려 시작 시점 예시 - 0회 내원 기준]
+ *   주 3회(잔여3): 남은 날 ≤ 3 (목요일부터)
+ *   주 2회(잔여2): 남은 날 ≤ 2 (금요일부터)
+ *   주 1회(잔여1): 남은 날 ≤ 1 (일요일부터)
+ *
+ * @param {string} accidentDate  - 사고일
+ * @param {boolean} isSevere     - 중증 여부
+ * @param {string[]} visitDates  - 내원 날짜 목록
+ * @returns {{
+ *   shouldEncourage: boolean,
+ *   remaining: number,       // 이번 주 잔여 슬롯 수
+ *   visitsThisWeek: number,  // 이번 주 실제 내원 횟수
+ *   maxPerWeek: number,      // 이번 주 최대 슬롯 수
+ *   daysLeft: number,        // 오늘 포함 이번 주 남은 날 수
+ * }}
+ */
+export function getWeekEncouragementStatus(accidentDate, isSevere, visitDates) {
+  const todayStr = today();
+  const { zone, maxPerWeek } = getTreatmentZone(accidentDate, todayStr, isSevere);
+
+  const empty = { shouldEncourage: false, remaining: 0, visitsThisWeek: 0, maxPerWeek: 0, daysLeft: 0 };
+
+  // daily / before 구간은 독려 대상 아님
+  if (zone === "before" || zone === "daily") return empty;
+
+  const { start: weekStart, end: weekEnd } = getWeekRange(accidentDate, todayStr);
+
+  // 이번 주 실제 내원 횟수
+  const visitsThisWeek = (visitDates || []).filter(d => d >= weekStart && d <= weekEnd).length;
+
+  // 잔여 슬롯
+  const remaining = Math.max(0, maxPerWeek - visitsThisWeek);
+
+  // 이미 이번 주 슬롯을 다 채운 경우
+  if (remaining === 0) return { ...empty, visitsThisWeek, maxPerWeek };
+
+  // 오늘 포함 이번 주 남은 날 수 (오늘=1, 내일=2, ... 주 마지막날=주끝까지)
+  const daysLeft = Math.round((new Date(weekEnd) - new Date(todayStr)) / (1000 * 60 * 60 * 24)) + 1;
+
+  // 독려 조건: (잔여 슬롯 + 1) > 남은 날
+  const shouldEncourage = (remaining + 1) > daysLeft;
+
+  return { shouldEncourage, remaining, visitsThisWeek, maxPerWeek, daysLeft };
 }
 
 /**
