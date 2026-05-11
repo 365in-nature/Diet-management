@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase";
 import {
   today, formatDate, isTodayOrPast, diffDays, addDays,
   canTreatToday, getConsecutiveMissedSlots, getHerbStatus,
-  getWeekRange, getTreatmentZone,
+  getWeekRange, getTreatmentZone, getWeekEncouragementStatus,
 } from "../lib/dateUtils";
 
 // =============================================
@@ -264,32 +264,47 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
   const { start: weekStart, end: weekEnd } = getWeekRange(patient.accident_date, targetDate);
   const visitsThisWeek = visitDates.filter(d => d >= weekStart && d <= weekEnd).length;
 
+  // 독려 알림 상태 (오늘 기준)
+  const encourage = getWeekEncouragementStatus(patient.accident_date, patient.is_severe, visitDates);
+
   // 주기 요일 표시 (사고일 기준 주 시작~끝 요일)
   const DOW = ["일","월","화","수","목","금","토"];
   const weekStartDow = DOW[new Date(weekStart).getDay()];
   const weekEndDow = DOW[new Date(weekEnd).getDay()];
   const weekLabel = `${weekStartDow}~${weekEndDow}`;
 
-  // 횟수 배지 색상: 0회=빨강, 진행중=파랑, 다 온 경우는 카드 자체가 사라지므로 고려 불필요
+  // 횟수 배지 색상: 0회=빨강, 진행중=파랑
   const countBadgeStyle = visitsThisWeek === 0
     ? { background:"var(--color-background-danger,#FCEBEB)", color:"var(--color-text-danger,#A32D2D)" }
     : { background:"var(--color-background-success,#EAF3DE)", color:"var(--color-text-success,#3B6D11)" };
 
+  // 카드 테두리: 미내원 경고 > 독려 > 기본
+  const borderColor = missedSlots >= 3 ? "#f5c6bd" : encourage.shouldEncourage ? "#b8d4f0" : "var(--border)";
+  const bgColor     = missedSlots >= 3 ? "#fffaf9"  : encourage.shouldEncourage ? "#f0f7ff"  : "var(--surface)";
+
   return (
     <div style={{
-      background:missedSlots>=3?"#fffaf9":"var(--surface)",
+      background: bgColor,
       borderRadius:"var(--r)", padding:"12px 16px", cursor:"pointer", transition:"all 0.2s",
-      border:`1.5px solid ${missedSlots>=3?"#f5c6bd":"var(--border)"}`,
+      border:`1.5px solid ${borderColor}`,
     }} onClick={() => onNavigate(patient)}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
         <div>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+            {/* 미내원 경고 */}
             {missedSlots >= 3 && (
               <div style={{display:"flex", alignItems:"center", gap:6}}>
                 <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>
                 <button className="btn btn-xs btn-secondary" onClick={e => { e.stopPropagation(); onCallLog(patient); }}>📞 전화기록</button>
               </div>
             )}
+            {/* 독려 알림 (미내원 경고가 없을 때만 표시) */}
+            {!missedSlots >= 3 && encourage.shouldEncourage && (
+              <span className="badge badge-info">
+                📢 이번 주 {encourage.remaining}회 가능 (남은 날 {encourage.daysLeft}일)
+              </span>
+            )}
+            {/* 한약 배지 */}
             {isRefused ? (
               <span className="badge badge-muted">🚫 한약 거부</span>
             ) : herbStatus.canPrescribe ? (
@@ -303,11 +318,10 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
             <span style={{ fontSize:12, color:"var(--ink-muted)" }}>차트 #{patient.chart_number}</span>
             <span style={{ fontSize:11, color:"var(--ink-muted)" }}>|</span>
             <span style={{ fontSize:12, color:"var(--ink-muted)" }}>{weekLabel}</span>
-            {zone !== "daily" && (
-              <span style={{ fontSize:12, fontWeight:700, padding:"1px 8px", borderRadius:20, ...countBadgeStyle }}>
-                {visitsThisWeek}/{maxPerWeek}
-              </span>
-            )}
+            {/* 매일 구간 포함 전 구간 이번 주 내원 현황 표시 */}
+            <span style={{ fontSize:12, fontWeight:700, padding:"1px 8px", borderRadius:20, ...countBadgeStyle }}>
+              {visitsThisWeek}/{zone === "daily" ? 7 : maxPerWeek}
+            </span>
           </div>
         </div>
         <button
@@ -460,9 +474,16 @@ export default function Dashboard({
       const bMissed = getConsecutiveMissedSlots(b.accident_date, b.is_severe, bVisits);
       const aAlert = aMissed >= 3 ? 1 : 0;
       const bAlert = bMissed >= 3 ? 1 : 0;
-      if (bAlert !== aAlert) return bAlert - aAlert; // 1순위: 미내원 알림(3회↑) 환자 먼저
-      if (bAlert && aAlert && bMissed !== aMissed) return bMissed - aMissed; // 2순위: 알림 환자끼리는 미내원 많은 순
-      return Number(b.chart_number) - Number(a.chart_number); // 3순위: 나머지는 차트번호 높은 순
+      // 1순위: 미내원 알림(3회↑) 환자 먼저
+      if (bAlert !== aAlert) return bAlert - aAlert;
+      // 2순위: 알림 환자끼리는 미내원 많은 순
+      if (bAlert && aAlert && bMissed !== aMissed) return bMissed - aMissed;
+      // 3순위: 독려 대상 환자 (미내원 경고 없는 환자 중)
+      const aEnc = getWeekEncouragementStatus(a.accident_date, a.is_severe, aVisits).shouldEncourage ? 1 : 0;
+      const bEnc = getWeekEncouragementStatus(b.accident_date, b.is_severe, bVisits).shouldEncourage ? 1 : 0;
+      if (bEnc !== aEnc) return bEnc - aEnc;
+      // 4순위: 나머지는 차트번호 높은 순
+      return Number(b.chart_number) - Number(a.chart_number);
     });
 
   // 해피콜 완료 토글

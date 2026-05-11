@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase";
 import {
   today, formatDate, formatDateKo, diffDays,
   getTreatmentZone, getWeekRange, canTreatToday,
-  getConsecutiveMissedSlots, getHerbStatus, addDays,
+  getConsecutiveMissedSlots, getHerbStatus, addDays, getWeekEncouragementStatus,
 } from "../lib/dateUtils";
 
 // =============================================
@@ -42,6 +42,7 @@ function VisitTab({ patient, visits, onVisitChange }) {
   const { start: weekStart, end: weekEnd } = zone !== "before" ? getWeekRange(patient.accident_date, todayStr) : { start:null, end:null };
   const visitsThisWeek = weekStart ? visitDates.filter(d => d >= weekStart && d <= weekEnd).length : 0;
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
+  const encourage = getWeekEncouragementStatus(patient.accident_date, patient.is_severe, visitDates);
   const canTreat = canTreatToday(patient.accident_date, patient.is_severe, visitDates);
   const todayVisited = visitDates.includes(todayStr);
 
@@ -128,7 +129,9 @@ function VisitTab({ patient, visits, onVisitChange }) {
         <div style={{display:"flex", gap:16, flexWrap:"wrap", marginBottom:16, fontSize:13}}>
           <div>
             <div className="form-label">이번 주 내원</div>
-            <div style={{fontSize:18, fontWeight:700, color:"var(--traffic)"}}>{visitsThisWeek} / {zone==="daily"?"매일":maxPerWeek}회</div>
+            <div style={{fontSize:18, fontWeight:700, color:"var(--traffic)"}}>
+              {visitsThisWeek} / {zone === "daily" ? 7 : maxPerWeek}회
+            </div>
           </div>
           <div>
             <div className="form-label">연속 미내원 슬롯</div>
@@ -154,6 +157,11 @@ function VisitTab({ patient, visits, onVisitChange }) {
         {missedSlots >= 3 && (
           <div className="alert-banner" style={{marginTop:12}}>
             ⚠️ 치료 가능 슬롯 {missedSlots}회 연속 미내원 — 환자 상태를 확인해주세요
+          </div>
+        )}
+        {encourage.shouldEncourage && (
+          <div className="alert-banner" style={{marginTop:8, background:"var(--info-pale)", borderColor:"var(--info)", color:"var(--info)"}}>
+            📢 이번 주 {encourage.visitsThisWeek}/{encourage.maxPerWeek}회 내원 — 남은 {encourage.daysLeft}일 안에 {encourage.remaining}회 더 가능합니다
           </div>
         )}
 
@@ -865,6 +873,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
             const visitDates = (visits[p.id] || []).map(v => v.visit_date);
             const canTreat = canTreatToday(p.accident_date, p.is_severe, visitDates);
             const missedSlots = getConsecutiveMissedSlots(p.accident_date, p.is_severe, visitDates);
+            const encourage = getWeekEncouragementStatus(p.accident_date, p.is_severe, visitDates);
             const todayVisited = visitDates.includes(today());
             const { zone } = getTreatmentZone(p.accident_date, today(), p.is_severe);
             const herbStatus = getHerbStatus(p.herb_prescribed_at);
@@ -883,6 +892,9 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
                   </div>
                   <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
                     {hasAlert && <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>}
+                    {!hasAlert && encourage.shouldEncourage && (
+                      <span className="badge badge-info">📢 이번 주 {encourage.remaining}회 가능</span>
+                    )}
                     {p.herb_refused ? (
                       <span className="badge badge-muted">🚫 한약 거부</span>
                     ) : herbStatus.canPrescribe ? (
