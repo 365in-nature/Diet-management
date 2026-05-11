@@ -299,7 +299,7 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
               </div>
             )}
             {/* 독려 알림 (미내원 경고가 없을 때만 표시) */}
-            {!missedSlots >= 3 && encourage.shouldEncourage && (
+            {!(missedSlots >= 3) && encourage.shouldEncourage && (
               <span className="badge badge-info">
                 📢 이번 주 {encourage.remaining}회 가능 (남은 날 {encourage.daysLeft}일)
               </span>
