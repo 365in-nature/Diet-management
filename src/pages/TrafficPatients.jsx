@@ -223,14 +223,22 @@ function InfoTab({ patient, onUpdate }) {
     chart_number: patient.chart_number || "",
     name: patient.name || "",
     accident_date: patient.accident_date || "",
-    herb_prescribed_at: patient.herb_prescribed_at || "",
     is_severe: patient.is_severe || false,
   });
-  const [herbForm, setHerbForm] = useState(patient.herb_prescribed_at || "");
+  const [herbPrescriptions, setHerbPrescriptions] = useState([]);
+  const [showHerbForm, setShowHerbForm] = useState(false);
+  const [herbForm, setHerbForm] = useState({ prescribed_at: today(), duration_days: "7", prescribed_by: "우리 한의원", memo: "" });
   const [saving, setSaving] = useState(false);
   const [savingHerb, setSavingHerb] = useState(false);
 
-  const herbStatus = getHerbStatus(patient.herb_prescribed_at);
+  const loadHerb = useCallback(async () => {
+    const { data } = await supabase.from("herb_prescriptions").select("*").eq("patient_id", patient.id).order("prescribed_at", { ascending: false });
+    setHerbPrescriptions(data || []);
+  }, [patient.id]);
+
+  useEffect(() => { loadHerb(); }, [loadHerb]);
+
+  const herbStatus = getHerbStatus(herbPrescriptions);
 
   // 기본 정보 수정
   const saveInfo = async () => {
@@ -244,14 +252,29 @@ function InfoTab({ patient, onUpdate }) {
     onUpdate();
   };
 
-  // 자보 한약 처방일 저장
+  // 자보 한약 처방 추가
   const saveHerb = async () => {
+    if (!herbForm.prescribed_at) { alert("처방일을 입력해주세요."); return; }
     setSavingHerb(true);
-    await supabase.from("traffic_patients").update({
-      herb_prescribed_at: herbForm || null,
-    }).eq("id", patient.id);
+    const { error } = await supabase.from("herb_prescriptions").insert([{
+      patient_id: patient.id,
+      prescribed_at: herbForm.prescribed_at,
+      duration_days: parseInt(herbForm.duration_days, 10) || 7,
+      prescribed_by: herbForm.prescribed_by || null,
+      memo: herbForm.memo || null,
+    }]);
+    if (error) { alert("저장 실패: " + error.message); setSavingHerb(false); return; }
+    setHerbForm({ prescribed_at: today(), duration_days: "7", prescribed_by: "우리 한의원", memo: "" });
+    setShowHerbForm(false);
     setSavingHerb(false);
-    onUpdate();
+    loadHerb();
+  };
+
+  // 자보 한약 처방 삭제
+  const deleteHerb = async (id) => {
+    if (!window.confirm("이 처방 기록을 삭제하시겠습니까?")) return;
+    await supabase.from("herb_prescriptions").delete().eq("id", id);
+    loadHerb();
   };
 
   // 중증 토글
@@ -364,11 +387,86 @@ function InfoTab({ patient, onUpdate }) {
           <div style={{display:"flex", gap:6, alignItems:"center"}}>
             {patient.herb_refused ? (
               <span className="badge badge-muted">🚫 거부</span>
-            ) : patient.herb_prescribed_at ? (
-              herbStatus.canPrescribe ? <span className="badge badge-info">처방 가능</span> : <span className="badge badge-muted">D-{herbStatus.dDay}</span>
+            ) : herbStatus.canPrescribe ? (
+              <span className="badge badge-info">처방 가능</span>
+            ) : herbStatus.dDay !== null ? (
+              <span className="badge badge-muted">D-{herbStatus.dDay}</span>
             ) : null}
+            {!patient.herb_refused && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowHerbForm(v => !v)}>
+                {showHerbForm ? "취소" : "+ 처방 추가"}
+              </button>
+            )}
           </div>
         </div>
+
+        {/* 총 처방 현황 */}
+        {!patient.herb_refused && (
+          <div style={{marginBottom:16, padding:"12px 16px", background:"var(--surface2)", borderRadius:"var(--r-sm)", border:"1px solid var(--border)"}}>
+            <div style={{display:"flex", gap:24, alignItems:"center", flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:11, color:"var(--ink-muted)", marginBottom:2}}>총 처방 사용</div>
+                <div style={{fontSize:18, fontWeight:700, color: herbStatus.usedDays >= herbStatus.totalDays ? "var(--warn)" : "var(--ink)"}}>
+                  {herbStatus.usedDays} / {herbStatus.totalDays}일
+                </div>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:"var(--ink-muted)", marginBottom:2}}>잔여 처방 가능</div>
+                <div style={{fontSize:18, fontWeight:700, color:"var(--accent)"}}>
+                  {herbStatus.remainingDays}일
+                </div>
+              </div>
+              {herbStatus.lastPrescribedAt && !herbStatus.canPrescribe && herbStatus.dDay !== null && (
+                <div>
+                  <div style={{fontSize:11, color:"var(--ink-muted)", marginBottom:2}}>다음 처방 가능일</div>
+                  <div style={{fontSize:14, fontWeight:600}}>
+                    {formatDate(addDays(herbStatus.lastPrescribedAt, 7))} <span style={{color:"var(--warn)"}}>D-{herbStatus.dDay}</span>
+                  </div>
+                </div>
+              )}
+              {herbStatus.canPrescribe && herbStatus.remainingDays > 0 && (
+                <div style={{fontSize:13, color:"var(--info)", fontWeight:600}}>💊 지금 처방 가능합니다</div>
+              )}
+              {herbStatus.remainingDays === 0 && (
+                <div style={{fontSize:13, color:"var(--warn)", fontWeight:600}}>⚠️ 총 21일 처방 완료</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 처방 추가 폼 */}
+        {!patient.herb_refused && showHerbForm && (
+          <div style={{marginBottom:16, padding:"12px 16px", background:"var(--surface2)", borderRadius:"var(--r-sm)", border:"1px solid var(--border)"}}>
+            <div className="form-grid">
+              <div className="form-group">
+                <label className="form-label">처방일 *</label>
+                <input className="form-input" type="date" value={herbForm.prescribed_at} onChange={e => setHerbForm({...herbForm, prescribed_at: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">처방 일수</label>
+                <select className="form-select" value={herbForm.duration_days} onChange={e => setHerbForm({...herbForm, duration_days: e.target.value})}>
+                  <option value="7">7일</option>
+                  <option value="14">14일</option>
+                  <option value="21">21일</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">처방 기관</label>
+                <input className="form-input" value={herbForm.prescribed_by} onChange={e => setHerbForm({...herbForm, prescribed_by: e.target.value})} placeholder="우리 한의원 / 타 한의원명" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">메모</label>
+                <input className="form-input" value={herbForm.memo} onChange={e => setHerbForm({...herbForm, memo: e.target.value})} placeholder="선택 입력" />
+              </div>
+            </div>
+            <div className="form-actions">
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowHerbForm(false)}>취소</button>
+              <button className="btn btn-primary btn-sm" onClick={saveHerb} disabled={savingHerb}>
+                {savingHerb ? "저장 중..." : "저장"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 한약 거부 토글 */}
         <div style={{marginBottom:16, padding:"12px 16px", background: patient.herb_refused ? "var(--warn-pale)" : "var(--surface2)", borderRadius:"var(--r-sm)", border:`1.5px solid ${patient.herb_refused?"#f5c6bd":"var(--border)"}`}}>
@@ -391,43 +489,32 @@ function InfoTab({ patient, onUpdate }) {
           </label>
         </div>
 
-        {/* 한약 거부 시 처방 섹션 비활성화 */}
+        {/* 처방 이력 목록 */}
         {!patient.herb_refused && (
-          <>
-            {patient.herb_prescribed_at ? (
-              <div style={{marginBottom:16, padding:"12px 16px", background: herbStatus.canPrescribe ? "var(--info-pale)" : "var(--surface2)", borderRadius:"var(--r-sm)", border:`1.5px solid ${herbStatus.canPrescribe ? "var(--info)" : "var(--border)"}`}}>
-                <div style={{fontSize:12, color:"var(--ink-muted)", marginBottom:4}}>마지막 처방일</div>
-                <div style={{fontSize:16, fontWeight:700}}>{formatDate(patient.herb_prescribed_at)}</div>
-                {herbStatus.canPrescribe ? (
-                  <div style={{fontSize:13, color:"var(--info)", fontWeight:600, marginTop:6}}>💊 지금 처방 가능합니다 (7일 경과)</div>
-                ) : (
-                  <div style={{fontSize:13, color:"var(--ink-muted)", marginTop:6}}>다음 처방 가능일: <strong>{formatDate(addDays(patient.herb_prescribed_at, 7))}</strong> (D-{herbStatus.dDay})</div>
-                )}
-              </div>
-            ) : (
-              <div className="empty" style={{padding:12}}>처방 기록이 없습니다</div>
-            )}
-
-            <div style={{marginTop:12}}>
-              <label className="form-label" style={{marginBottom:6, display:"block"}}>
-                {patient.herb_prescribed_at ? "처방일 수정" : "처방일 입력"}
-              </label>
-              <div style={{display:"flex", gap:10, alignItems:"center"}}>
-                <input className="form-input" type="date" value={herbForm} onChange={e => setHerbForm(e.target.value)} style={{flex:1}} />
-                <button className="btn btn-primary btn-sm" onClick={saveHerb} disabled={savingHerb}>
-                  {savingHerb ? "저장 중..." : "저장"}
-                </button>
-                {patient.herb_prescribed_at && (
-                  <button className="btn btn-danger btn-sm" onClick={async () => {
-                    if (!window.confirm("자보 한약 처방 기록을 삭제하시겠습니까?")) return;
-                    await supabase.from("traffic_patients").update({ herb_prescribed_at: null }).eq("id", patient.id);
-                    setHerbForm("");
-                    onUpdate();
-                  }}>삭제</button>
-                )}
-              </div>
+          herbPrescriptions.length === 0 ? (
+            <div className="empty" style={{padding:12}}>처방 기록이 없습니다</div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>처방일</th><th>처방 기관</th><th>일수</th><th>메모</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {herbPrescriptions.map(p => (
+                    <tr key={p.id}>
+                      <td><strong>{formatDate(p.prescribed_at)}</strong></td>
+                      <td style={{fontSize:13}}>{p.prescribed_by || "-"}</td>
+                      <td><span className="badge badge-info">{p.duration_days}일</span></td>
+                      <td style={{fontSize:12, color:"var(--ink-muted)"}}>{p.memo || "-"}</td>
+                      <td>
+                        <button className="btn btn-xs btn-danger" onClick={() => deleteHerb(p.id)}>삭제</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </>
+          )
         )}
       </div>
     </div>
@@ -567,7 +654,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
   const [visits, setVisits] = useState(initialVisits);
 
   const refreshPatient = async () => {
-    const { data } = await supabase.from("traffic_patients").select("*").eq("id", patient.id).single();
+    const { data } = await supabase.from("traffic_patients").select("*, herb_prescriptions(*)").eq("id", patient.id).single();
     if (data) setPatient(data);
     onUpdate();
   };
@@ -581,7 +668,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
   const visitDates = visits.map(v => v.visit_date);
   const { zone } = getTreatmentZone(patient.accident_date, today(), patient.is_severe);
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
-  const herbStatus = getHerbStatus(patient.herb_prescribed_at);
+  const herbStatus = getHerbStatus(patient.herb_prescriptions || []);
   const daysSinceAccident = patient.accident_date ? diffDays(patient.accident_date, today()) : null;
 
   return (
@@ -605,8 +692,8 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
           <div style={{display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end"}}>
             <ZoneBadge zone={zone} />
             {missedSlots >= 3 && <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>}
-            {herbStatus.canPrescribe && <span className="badge badge-info">💊 한약 처방 가능</span>}
-            {!herbStatus.canPrescribe && herbStatus.dDay !== null && herbStatus.dDay > 0 && (
+            {!patient.herb_refused && herbStatus.canPrescribe && <span className="badge badge-info">💊 한약 처방 가능</span>}
+            {!patient.herb_refused && !herbStatus.canPrescribe && herbStatus.dDay !== null && (
               <span className="badge badge-muted">💊 한약 D-{herbStatus.dDay}</span>
             )}
             {patient.is_closed ? (
@@ -655,7 +742,6 @@ function NewPatientModal({ onClose }) {
     chart_number: "",
     name: "",
     accident_date: today(),
-    herb_prescribed_at: "",
     is_severe: false,
     herb_refused: false,
   });
@@ -670,7 +756,6 @@ function NewPatientModal({ onClose }) {
       chart_number: form.chart_number,
       name: form.name,
       accident_date: form.accident_date,
-      herb_prescribed_at: form.herb_prescribed_at || null,
       is_severe: form.is_severe,
       herb_refused: form.herb_refused,
       severe_updated_at: form.is_severe ? new Date().toISOString() : null,
@@ -702,10 +787,7 @@ function NewPatientModal({ onClose }) {
             <label className="form-label">사고일 *</label>
             <input className="form-input" type="date" value={form.accident_date} onChange={e => setForm({...form, accident_date: e.target.value})} />
           </div>
-          <div className="form-group">
-            <label className="form-label">자보 한약 처방일 (선택)</label>
-            <input className="form-input" type="date" value={form.herb_prescribed_at} onChange={e => setForm({...form, herb_prescribed_at: e.target.value})} />
-          </div>
+
         </div>
 
         {/* 중증 체크박스 */}
@@ -770,7 +852,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
     setLoading(true);
     const { data: pts } = await supabase
       .from("traffic_patients")
-      .select("*")
+      .select("*, herb_prescriptions(*)")
       .eq("is_closed", false)
       .order("created_at", { ascending: false });
 
@@ -876,7 +958,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
             const encourage = getWeekEncouragementStatus(p.accident_date, p.is_severe, visitDates);
             const todayVisited = visitDates.includes(today());
             const { zone } = getTreatmentZone(p.accident_date, today(), p.is_severe);
-            const herbStatus = getHerbStatus(p.herb_prescribed_at);
+            const herbStatus = getHerbStatus(p.herb_prescriptions || []);
             const hasAlert = missedSlots >= 3;
 
             return (

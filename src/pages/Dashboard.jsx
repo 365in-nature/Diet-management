@@ -256,7 +256,7 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
   const visitDates = visits.map(v => v.visit_date);
   const dateVisited = visitDates.includes(targetDate);
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
-  const herbStatus = getHerbStatus(patient.herb_prescribed_at);
+  const herbStatus = getHerbStatus(patient.herb_prescriptions || []);
   const isRefused = patient.herb_refused;
 
   // 주기 및 이번 주 내원 횟수 계산
@@ -372,7 +372,7 @@ export default function Dashboard({
       .eq("is_completed", false);
 
     // 교통사고 환자 (종결 제외)
-    const { data: trPatients } = await supabase.from("traffic_patients").select("*").eq("is_closed", false).order("created_at", { ascending: false });
+    const { data: trPatients } = await supabase.from("traffic_patients").select("*, herb_prescriptions(*)").eq("is_closed", false).order("created_at", { ascending: false });
     const { data: trVisits } = await supabase.from("traffic_visits").select("*").order("visit_date", { ascending: false });
 
     const visitMap = {};
