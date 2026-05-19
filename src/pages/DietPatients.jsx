@@ -207,8 +207,19 @@ function MeasurementTab({ patient }) {
   };
 
   const saveGoal = async () => {
-    if (goal) await supabase.from("goals").update(gForm).eq("id", goal.id);
-    else await supabase.from("goals").insert([{ ...gForm, patient_id: patient.id }]);
+    const payload = {
+      target_weight: gForm.target_weight !== "" ? parseFloat(gForm.target_weight) : null,
+      target_period_weeks: gForm.target_period_weeks !== "" ? parseInt(gForm.target_period_weeks, 10) : null,
+      start_date: gForm.start_date || null,
+      constitution: gForm.constitution || null,
+    };
+    let error;
+    if (goal) {
+      ({ error } = await supabase.from("goals").update(payload).eq("id", goal.id));
+    } else {
+      ({ error } = await supabase.from("goals").insert([{ ...payload, patient_id: patient.id }]));
+    }
+    if (error) { alert("저장 실패: " + error.message); return; }
     setShowGoalForm(false);
     load();
   };
