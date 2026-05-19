@@ -314,21 +314,49 @@ export function getWeekEncouragementStatus(accidentDate, isSevere, visitDates) {
 }
 
 /**
- * 자보 한약 처방 가능 여부 및 D-day 반환
- * @param {string | null} herbPrescribedAt - 마지막 한약 처방일
- * @returns {{ canPrescribe: boolean, dDay: number | null }}
- *   canPrescribe: 처방 가능 여부
- *   dDay: 양수면 D-day(며칠 후), 0이면 오늘 가능, 음수면 이미 지남
+ * 자보 한약 처방 가능 여부, D-day, 총 사용일수 반환
+ * @param {Array<{ prescribed_at: string, duration_days: number }>} prescriptions - 처방 이력 배열
+ * @returns {{
+ *   canPrescribe: boolean,   // 처방 가능 여부
+ *   dDay: number | null,     // 다음 처방까지 남은 일수 (양수=대기중, 0이하=가능)
+ *   usedDays: number,        // 총 사용일수 (타 기관 포함)
+ *   totalDays: number,       // 최대 허용 일수 (21일)
+ *   remainingDays: number,   // 잔여 처방 가능 일수
+ *   lastPrescribedAt: string | null, // 가장 최근 처방일
+ * }}
  */
-export function getHerbStatus(herbPrescribedAt) {
-  if (!herbPrescribedAt) return { canPrescribe: false, dDay: null };
+export function getHerbStatus(prescriptions) {
+  const MAX_DAYS = 21;
+  const list = prescriptions || [];
 
-  const nextDate = addDays(herbPrescribedAt, 7);
-  const diff = diffDays(today(), nextDate);
+  // 총 사용일수 합산 (타 기관 포함)
+  const usedDays = list.reduce((sum, p) => sum + Number(p.duration_days || 7), 0);
+  const remainingDays = Math.max(0, MAX_DAYS - usedDays);
+
+  // 처방 기록 없음 → 신규 환자, 처방 가능
+  if (list.length === 0) {
+    return { canPrescribe: true, dDay: null, usedDays: 0, totalDays: MAX_DAYS, remainingDays: MAX_DAYS, lastPrescribedAt: null };
+  }
+
+  // 잔여 일수 없으면 처방 불가
+  if (remainingDays <= 0) {
+    return { canPrescribe: false, dDay: null, usedDays, totalDays: MAX_DAYS, remainingDays: 0, lastPrescribedAt: null };
+  }
+
+  // 가장 최근 처방일
+  const lastPrescribedAt = [...list].sort((a, b) => b.prescribed_at.localeCompare(a.prescribed_at))[0].prescribed_at;
+
+  // 다음 처방 가능일 = 마지막 처방일 + 7일
+  const nextDate = addDays(lastPrescribedAt, 7);
+  const dDay = diffDays(today(), nextDate);
 
   return {
-    canPrescribe: diff <= 0,
-    dDay: diff,
+    canPrescribe: dDay <= 0,
+    dDay: dDay > 0 ? dDay : null,
+    usedDays,
+    totalDays: MAX_DAYS,
+    remainingDays,
+    lastPrescribedAt,
   };
 }
 
