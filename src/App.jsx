@@ -280,6 +280,7 @@ export default function App() {
   const [selectTangPatientId, setSelectTangPatientId] = useState(null);
   const [selectTangTab, setSelectTangTab] = useState(null);
   const [selectTrafficPatientId, setSelectTrafficPatientId] = useState(null);
+  const [resetKey, setResetKey] = useState(0);
 
   // 세션 초기화
   useEffect(() => {
@@ -440,7 +441,7 @@ export default function App() {
                   <div
                     key={item.key}
                     className={`nav-item ${page === item.key ? "active" : ""}`}
-                    onClick={() => setPage(item.key)}
+                    onClick={() => { if (page === item.key) setResetKey(k => k + 1); else setPage(item.key); }}
                   >
                     {item.icon} {item.label}
                   </div>
@@ -482,6 +483,7 @@ export default function App() {
 
               {page === "dashboard" && (
                 <Dashboard
+                  key={resetKey}
                   currentUser={currentUser}
                   onNavigate={setPage}
                   onSelectDietPatient={(id, tab) => {
@@ -502,6 +504,7 @@ export default function App() {
               )}
               {page === "diet" && (
                 <DietPatients
+                  key={resetKey}
                   currentUser={currentUser}
                   selectPatientId={selectDietPatientId}
                   selectTab={selectDietTab}
@@ -510,6 +513,7 @@ export default function App() {
               )}
               {page === "tang" && (
                 <TangPatients
+                  key={resetKey}
                   currentUser={currentUser}
                   selectPatientId={selectTangPatientId}
                   selectTab={selectTangTab}
@@ -518,25 +522,31 @@ export default function App() {
               )}
               {page === "traffic" && (
                 <TrafficPatients
+                  key={resetKey}
                   currentUser={currentUser}
                   selectPatientId={selectTrafficPatientId}
                   onMounted={() => setSelectTrafficPatientId(null)}
                 />
               )}
               {page === "newpatients" && (
-                <NewPatients currentUser={currentUser} />
+                <NewPatients
+                  key={resetKey} currentUser={currentUser} />
               )}
               {page === "visitstats" && (
-                <VisitStats currentUser={currentUser} />
+                <VisitStats
+                  key={resetKey} currentUser={currentUser} />
               )}
               {page === "notices" && (
-                <Notices currentUser={currentUser} />
+                <Notices
+                  key={resetKey} currentUser={currentUser} />
               )}
               {page === "plants" && (
-                <Plants currentUser={currentUser} />
+                <Plants
+                  key={resetKey} currentUser={currentUser} />
               )}
               {page === "admin" && (
                 <Admin
+                  key={resetKey}
                   currentUser={currentUser}
                   lastBackupAt={lastBackupAt}
                   onBackup={handleBackup}
