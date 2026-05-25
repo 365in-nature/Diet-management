@@ -223,6 +223,7 @@ function InfoTab({ patient, onUpdate }) {
     chart_number: patient.chart_number || "",
     name: patient.name || "",
     accident_date: patient.accident_date || "",
+    phone: patient.phone || "",
     is_severe: patient.is_severe || false,
   });
   const [herbPrescriptions, setHerbPrescriptions] = useState([]);
@@ -247,6 +248,7 @@ function InfoTab({ patient, onUpdate }) {
       chart_number: form.chart_number,
       name: form.name,
       accident_date: form.accident_date,
+      phone: form.phone || null,
     }).eq("id", patient.id);
     setSaving(false);
     onUpdate();
@@ -312,6 +314,10 @@ function InfoTab({ patient, onUpdate }) {
           <div className="form-group">
             <label className="form-label">이름</label>
             <input className="form-input" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">연락처</label>
+            <input className="form-input" placeholder="010-0000-0000" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
           </div>
           <div className="form-group form-full">
             <label className="form-label">사고일</label>
@@ -579,9 +585,20 @@ function CallTab({ patient, currentUser }) {
       <div className="card" style={{marginBottom:16}}>
         <div className="section-header">
           <div className="section-title">📞 전화 기록</div>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(v => !v)}>
-            {showForm ? "취소" : "+ 전화 기록 추가"}
-          </button>
+          <div style={{display:"flex", gap:8, alignItems:"center"}}>
+            {patient.phone && (
+              <a
+                href={`tel:${patient.phone}`}
+                className="btn btn-secondary btn-sm"
+                style={{textDecoration:"none"}}
+              >
+                📲 {patient.phone}
+              </a>
+            )}
+            <button className="btn btn-primary btn-sm" onClick={() => setShowForm(v => !v)}>
+              {showForm ? "취소" : "+ 전화 기록 추가"}
+            </button>
+          </div>
         </div>
 
         {showForm && (
@@ -688,6 +705,21 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
               차트 #{patient.chart_number} · 사고일 {formatDate(patient.accident_date)}
               {daysSinceAccident !== null && ` · 사고 후 ${daysSinceAccident}일`}
             </div>
+            {patient.phone && (
+              <div style={{marginTop:6}}>
+                <a
+                  href={`tel:${patient.phone}`}
+                  style={{
+                    display:"inline-flex", alignItems:"center", gap:6,
+                    color:"rgba(255,255,255,0.85)", fontSize:13, textDecoration:"none",
+                    background:"rgba(255,255,255,0.12)", padding:"4px 12px",
+                    borderRadius:20, border:"1px solid rgba(255,255,255,0.2)",
+                  }}
+                >
+                  📲 {patient.phone}
+                </a>
+              </div>
+            )}
           </div>
           <div style={{display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end"}}>
             <ZoneBadge zone={zone} />
@@ -742,6 +774,7 @@ function NewPatientModal({ onClose }) {
     chart_number: "",
     name: "",
     accident_date: today(),
+    phone: "",
     is_severe: false,
     herb_refused: false,
   });
@@ -756,6 +789,7 @@ function NewPatientModal({ onClose }) {
       chart_number: form.chart_number,
       name: form.name,
       accident_date: form.accident_date,
+      phone: form.phone || null,
       is_severe: form.is_severe,
       herb_refused: form.herb_refused,
       severe_updated_at: form.is_severe ? new Date().toISOString() : null,
@@ -784,10 +818,13 @@ function NewPatientModal({ onClose }) {
             <input className="form-input" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
           </div>
           <div className="form-group">
+            <label className="form-label">연락처</label>
+            <input className="form-input" placeholder="010-0000-0000" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
+          </div>
+          <div className="form-group">
             <label className="form-label">사고일 *</label>
             <input className="form-input" type="date" value={form.accident_date} onChange={e => setForm({...form, accident_date: e.target.value})} />
           </div>
-
         </div>
 
         {/* 중증 체크박스 */}
@@ -971,6 +1008,11 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
                     </div>
                     <div className="patient-name">{p.name}</div>
                     <div className="patient-chart">차트 #{p.chart_number}</div>
+                    {p.phone && (
+                      <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:2}}>
+                        📲 {p.phone}
+                      </div>
+                    )}
                   </div>
                   <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
                     {hasAlert && <span className="badge badge-warn">⚠️ {missedSlots}회 연속 미내원</span>}
@@ -1043,6 +1085,11 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
                       <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:4}}>
                         사고일 {formatDate(p.accident_date)}
                       </div>
+                      {p.phone && (
+                        <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:2}}>
+                          📲 {p.phone}
+                        </div>
+                      )}
                     </div>
                     <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
                       <span className="badge badge-muted">종결</span>
