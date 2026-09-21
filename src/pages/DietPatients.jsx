@@ -24,7 +24,7 @@ function bmiCategory(bmi) {
 }
 
 // =============================================
-// LINE CHART
+// LINE CHART (기존 App.jsx 그대로)
 // =============================================
 function LineChart({ data, valueKey, color = "#52b788", showDiff = false }) {
   if (!data || data.length < 2) return (
@@ -90,7 +90,7 @@ function LineChart({ data, valueKey, color = "#52b788", showDiff = false }) {
 }
 
 // =============================================
-// 목표 체중 예측 그래프
+// 목표 체중 예측 그래프 (기존 App.jsx 그대로)
 // =============================================
 function WeightProjectionChart({ currentWeight, targetWeight, height }) {
   if (!currentWeight || !targetWeight || !height) return null;
@@ -171,7 +171,7 @@ function WeightProjectionChart({ currentWeight, targetWeight, height }) {
 }
 
 // =============================================
-// TAB 1: 체형 측정
+// TAB 1: 체형 측정 (기존 App.jsx 그대로)
 // =============================================
 function MeasurementTab({ patient }) {
   const [measurements, setMeasurements] = useState([]);
@@ -232,6 +232,7 @@ function MeasurementTab({ patient }) {
 
   return (
     <div>
+      {/* 목표 설정 */}
       <div className="card" style={{marginBottom:16}}>
         <div className="section-header">
           <div className="section-title">🎯 목표 설정</div>
@@ -300,6 +301,7 @@ function MeasurementTab({ patient }) {
         )}
       </div>
 
+      {/* 체형 측정 기록 */}
       <div className="card">
         <div className="section-header">
           <div className="section-title">📊 체형 측정 기록</div>
@@ -347,6 +349,7 @@ function MeasurementTab({ patient }) {
           </div>
         )}
 
+        {/* Flat 구간 감지 + 선 그래프 */}
         {measurements.length >= 2 && (() => {
           const sorted = [...measurements].sort((a,b) => a.measured_at.localeCompare(b.measured_at));
           let flatAlert = null;
@@ -377,6 +380,7 @@ function MeasurementTab({ patient }) {
           );
         })()}
 
+        {/* 측정 기록 테이블 */}
         <div className="table-wrap">
           <table>
             <thead>
@@ -421,7 +425,7 @@ function MeasurementTab({ patient }) {
 }
 
 // =============================================
-// TAB 2: 인바디 분석
+// TAB 2: 인바디 분석 (기존 App.jsx 그대로)
 // =============================================
 const INBODY_FIELDS = [
   { key: "height",           label: "신장",      unit: "cm"   },
@@ -564,6 +568,7 @@ function InbodyTab({ patient }) {
     load();
   };
 
+  // 인바디 선 그래프용 데이터
   const chartData = records.map(r => ({
     measured_at: r.measured_at,
     muscle_mass: r.parsed_data?.muscle_mass,
@@ -602,6 +607,7 @@ function InbodyTab({ patient }) {
           onCancel={() => setEditingRecord(null)} />
       )}
 
+      {/* 변화 추이 — 선 그래프 (기존 App.jsx 스타일) */}
       {records.length >= 2 && (
         <div className="card" style={{marginBottom:16}}>
           <div className="section-title" style={{marginBottom:12}}>📈 변화 추이</div>
@@ -614,6 +620,7 @@ function InbodyTab({ patient }) {
         </div>
       )}
 
+      {/* 측정 이력 */}
       <div className="card">
         <div className="section-header">
           <div className="section-title">🗂 측정 이력</div>
@@ -1101,142 +1108,7 @@ function VisitTab({ patient }) {
 }
 
 // =============================================
-// TAB 5: 전화 기록 (신규)
-// =============================================
-const CALL_STATUS = ["연락됨", "부재중", "예약변경", "내원예정", "기타"];
-
-function CallTab({ patient, currentUser }) {
-  const [calls, setCalls] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [status, setStatus] = useState("연락됨");
-  const [memo, setMemo] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const loadCalls = async () => {
-    setLoading(true);
-    const { data } = await supabase
-      .from("diet_missed_calls")
-      .select("*")
-      .eq("patient_id", patient.id)
-      .order("called_at", { ascending: false });
-    setCalls(data || []);
-    setLoading(false);
-  };
-
-  useEffect(() => { loadCalls(); }, [patient.id]);
-
-  const handleSave = async () => {
-    setSaving(true);
-    await supabase.from("diet_missed_calls").insert([{
-      patient_id: patient.id,
-      called_at: new Date().toISOString(),
-      called_by: currentUser?.name || currentUser?.email || "Unknown",
-      status,
-      memo: memo.trim() || null,
-    }]);
-    setMemo("");
-    setStatus("연락됨");
-    setShowForm(false);
-    setSaving(false);
-    loadCalls();
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm("이 전화 기록을 삭제하시겠습니까?")) return;
-    await supabase.from("diet_missed_calls").delete().eq("id", id);
-    loadCalls();
-  };
-
-  const statusColor = (s) => ({
-    "연락됨": "var(--teal)", "부재중": "var(--warn)", "예약변경": "var(--info)",
-    "내원예정": "var(--accent)", "기타": "var(--ink-muted)",
-  }[s] || "var(--ink-muted)");
-
-  return (
-    <div>
-      <div className="card">
-        <div className="section-header">
-          <div className="section-title">📞 전화 기록</div>
-          <div style={{display:"flex", gap:8, alignItems:"center"}}>
-            {patient.phone && (
-              <a
-                href={`tel:${patient.phone}`}
-                className="btn btn-secondary btn-sm"
-                style={{textDecoration:"none"}}
-              >
-                📲 {patient.phone}
-              </a>
-            )}
-            <button className="btn btn-primary btn-sm" onClick={() => setShowForm(v => !v)}>
-              {showForm ? "취소" : "+ 전화 기록 추가"}
-            </button>
-          </div>
-        </div>
-
-        {showForm && (
-          <div style={{background:"var(--surface2)", borderRadius:"var(--r-sm)", padding:16, marginBottom:16}}>
-            <div className="form-grid" style={{marginBottom:12}}>
-              <div className="form-group">
-                <label className="form-label">상태</label>
-                <select className="form-input" value={status} onChange={e => setStatus(e.target.value)}>
-                  {CALL_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="form-group" style={{marginBottom:12}}>
-              <label className="form-label">메모</label>
-              <textarea
-                className="form-input"
-                rows={3}
-                placeholder="통화 내용을 입력하세요..."
-                value={memo}
-                onChange={e => setMemo(e.target.value)}
-                style={{resize:"vertical"}}
-              />
-            </div>
-            <div className="form-actions">
-              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-                {saving ? "저장 중..." : "저장"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="empty">불러오는 중...</div>
-        ) : calls.length === 0 ? (
-          <div className="empty">전화 기록이 없습니다</div>
-        ) : (
-          <div style={{display:"flex", flexDirection:"column", gap:10}}>
-            {calls.map(c => (
-              <div key={c.id} style={{background:"var(--surface)", border:"1px solid var(--border)", borderRadius:"var(--r-sm)", padding:"12px 16px"}}>
-                <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8}}>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6}}>
-                      <span style={{background:"var(--surface2)", color:statusColor(c.status), fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:20}}>
-                        {c.status}
-                      </span>
-                      <span style={{fontSize:12, color:"var(--ink-muted)"}}>
-                        {new Date(c.called_at).toLocaleDateString("ko-KR", {year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"})}
-                      </span>
-                      <span style={{fontSize:12, color:"var(--ink-muted)"}}>· {c.called_by}</span>
-                    </div>
-                    <div style={{fontSize:13, color:"var(--ink)", lineHeight:1.6, whiteSpace:"pre-wrap"}}>{c.memo}</div>
-                  </div>
-                  <button className="btn btn-xs btn-danger" onClick={() => handleDelete(c.id)}>삭제</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// =============================================
-// PDF 출력
+// PDF 출력 (기존 App.jsx generatePDF 그대로)
 // =============================================
 function usePDFGenerator(patient) {
   const [generating, setGenerating] = useState(false);
@@ -1351,12 +1223,20 @@ function usePDFGenerator(patient) {
   .insight-warn strong{color:#e07a5f;}
   .divider{height:1px;background:#e8e6e0;margin:32px 0;}
   .footer{background:#f4f3ef;padding:20px 48px;font-size:11px;color:#9090b0;display:flex;justify-content:space-between;margin-top:40px;}
+  .ib-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;}
+  .ib-card{background:#faf9f6;border:1px solid #e8e6e0;border-radius:10px;padding:14px 16px;}
+  .ib-label{font-size:10px;color:#9090b0;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;}
+  .ib-val{font-size:20px;font-weight:700;}
+  .ib-warn{color:#e07a5f;}.ib-ok{color:#2d6a4f;}
+  .ib-warn-msg{font-size:10px;color:#e07a5f;margin-top:2px;font-weight:600;}
   @media print {
     @page{margin:15mm 12mm 20mm;size:A4 portrait;}
     body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .section-block{page-break-inside:avoid;break-inside:avoid;}
     .no-break{page-break-inside:avoid;break-inside:avoid;}
     .footer{page-break-before:avoid;break-before:avoid;}
+    .chart-wrap{overflow:visible;padding:4px 8px;}
+    .chart-wrap svg{width:100%;height:100%;}
   }
 </style></head><body>
 <div class="body">
@@ -1368,12 +1248,45 @@ function usePDFGenerator(patient) {
     <div class="goal-card"><div class="goal-label">목표 기간</div><div class="goal-value">${goal.target_period_weeks} <span style="font-size:14px;font-weight:400">주</span></div></div>
     <div class="goal-card"><div class="goal-label">현재 체중</div><div class="goal-value">${latestWeight || "-"} <span style="font-size:14px;font-weight:400">kg</span></div></div>
     <div class="goal-card"><div class="goal-label">총 감량</div><div class="goal-value info">${lost ? `-${lost}` : "-"} <span style="font-size:14px;font-weight:400">kg</span></div></div>
-  </div>` : '<div style="color:#9090b0;font-size:13px;padding:16px 0">목표가 등록되지 않았습니다</div>'}
+  </div>
+  ${goal.target_weight && latestWeight && startWeight ? `
+  <div class="progress-wrap">
+    <div class="progress-label"><span>시작 ${startWeight}kg → 현재 ${latestWeight}kg</span><span>목표 ${goal.target_weight}kg</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:${Math.max(0,Math.min(100,Math.round((startWeight-latestWeight)/(startWeight-goal.target_weight)*100)))}%"></div></div>
+  </div>` : ""}` : '<div style="color:#9090b0;font-size:13px;padding:16px 0">목표가 등록되지 않았습니다</div>'}
   ${ms.length >= 2 ? `
   <div class="chart-row">
     <div class="chart-block"><div class="chart-label">체중 추이 (kg)</div><div class="chart-wrap">${makeSVG(ms, "weight", "#2d6a4f", "체중", "kg", true)}</div></div>
     ${ms.some(m => m.bmi) ? `<div class="chart-block"><div class="chart-label">BMI 추이</div><div class="chart-wrap">${makeSVG(ms, "bmi", "#c9a94e", "BMI", "")}</div></div>` : "<div></div>"}
-  </div>` : ''}
+  </div>` : '<div style="color:#9090b0;font-size:12px;padding:8px 0">체형 측정 데이터가 2개 이상이어야 그래프가 표시됩니다</div>'}
+  ${ms.length > 0 ? (() => {
+    const first = ms[0]; const last = ms[ms.length-1];
+    const rows = ms.length === 1 ? [first] : [first, last];
+    const startW = first.weight;
+    return `<table><thead><tr><th>구분</th><th>측정일</th><th>키(cm)</th><th>체중(kg)</th><th>BMI</th><th>최초 대비 변화</th><th>메모</th></tr></thead><tbody>
+    ${rows.map((m, i) => {
+      const isLast = i === rows.length - 1 && rows.length > 1;
+      const diff = isLast && startW && m.weight ? (m.weight - startW).toFixed(1) : null;
+      const diffPct = isLast && startW && m.weight ? ((m.weight - startW) / startW * 100).toFixed(1) : null;
+      const cat = bmiCat(m.bmi);
+      return `<tr><td><strong style="color:${isLast?"#3d7ebf":"#2d6a4f"}">${isLast?"최근":"최초"}</strong></td><td>${formatDate(m.measured_at)}</td><td>${m.height||"-"}</td><td><strong>${m.weight||"-"}</strong></td><td>${m.bmi?`${m.bmi} <span class="badge ${["정상"].includes(cat)?"badge-ok":"badge-warn"}">${cat}</span>`:"-"}</td><td>${diff?`<span class="badge ${parseFloat(diff)<0?"badge-down":"badge-up"}">${parseFloat(diff)>0?"+":""}${diff}kg (${parseFloat(diffPct)>0?"+":""}${diffPct}%)</span>`:"-"}</td><td style="color:#9090b0">${m.memo||"-"}</td></tr>`;
+    }).join("")}
+    </tbody></table>`;
+  })() : ""}
+  <div class="insight"><strong>BMI 해석 기준 (아시아인)</strong><br>저체중: BMI &lt; 18.5 | 정상: 18.5~22.9 | 과체중: 23~24.9 | 비만: ≥ 25</div>
+</div>
+<div class="divider"></div>
+<div class="section-block no-break">
+  <div class="section-head"><div class="section-num">2</div><div class="section-title">인바디 체성분 분석</div></div>
+  ${ib.length === 0 ? '<div style="color:#9090b0;font-size:13px;padding:16px 0">인바디 측정 기록이 없습니다</div>' : `
+  ${ib.length >= 2 ? `
+  <div class="chart-row" style="grid-template-columns:1fr 1fr 1fr;">
+    <div class="chart-block"><div class="chart-label">골격근량 추이 (kg)</div><div class="chart-wrap">${makeSVG(ib.map(r=>({measured_at:r.measured_at,muscle_mass:r.parsed_data?.muscle_mass})),"muscle_mass","#2d6a4f","골격근량","kg")}</div></div>
+    <div class="chart-block"><div class="chart-label">체지방량 추이 (kg)</div><div class="chart-wrap">${makeSVG(ib.map(r=>({measured_at:r.measured_at,body_fat_mass:r.parsed_data?.body_fat_mass})),"body_fat_mass","#c9a94e","체지방량","kg")}</div></div>
+    <div class="chart-block"><div class="chart-label">체지방률 추이 (%)</div><div class="chart-wrap">${makeSVG(ib.map(r=>({measured_at:r.measured_at,body_fat_percent:r.parsed_data?.body_fat_percent})),"body_fat_percent","#e07a5f","체지방률","%")}</div></div>
+  </div>` : ""}
+  <div class="insight insight-warn" style="margin-top:16px"><strong>체지방률 해석 기준</strong><br>여성: 정상 18~27% | <strong>28% 이상</strong> → 마른 비만 가능성<br>남성: 정상 10~24% | <strong>25% 이상</strong> → 마른 비만 가능성</div>
+  `}
 </div>
 </div>
 <div class="footer"><span>건강관리 리포트</span><span>${patient.name} 님 · 출력일 ${formatDate(today())}</span></div>
@@ -1396,45 +1309,49 @@ function usePDFGenerator(patient) {
 // =============================================
 // 환자 상세 페이지
 // =============================================
-function PatientDetail({ patient, onBack, initialTab, currentUser }) {
+function PatientDetail({ patient, onBack, initialTab }) {
   const [tab, setTab] = useState(initialTab || "measurement");
   const { generating, generatePDF } = usePDFGenerator(patient);
+
+  // 종결 / 복원 처리
+  const closePatient = async () => {
+    if (!window.confirm(`${patient.name} 환자를 종결 처리하시겠습니까?\n종결 후 목록에서 숨겨지며 복원 가능합니다.`)) return;
+    await supabase.from("patients").update({ is_closed: true }).eq("id", patient.id);
+    onBack();
+  };
+  const restorePatient = async () => {
+    if (!window.confirm(`${patient.name} 환자를 복원하시겠습니까?`)) return;
+    await supabase.from("patients").update({ is_closed: false }).eq("id", patient.id);
+    onBack();
+  };
 
   return (
     <div>
       <button className="back-btn" onClick={onBack}>← 목록으로</button>
-      <div style={{background:"var(--ink)", color:"#fff", borderRadius:"var(--r)", padding:24, marginBottom:24}}>
-        <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12}}>
-          <div>
-            <div style={{fontFamily:"'DM Serif Display', serif", fontSize:24}}>{patient.name}</div>
-            <div style={{fontSize:12, color:"rgba(255,255,255,0.5)", marginTop:4}}>
-              차트 #{patient.chart_number}
-              {patient.gender && ` · ${patient.gender === "female" ? "여성" : "남성"}`}
-              {patient.birth_date && ` · ${patient.birth_date}`}
-            </div>
-            {patient.phone && (
-              <div style={{marginTop:6}}>
-                <a
-                  href={`tel:${patient.phone}`}
-                  style={{
-                    display:"inline-flex", alignItems:"center", gap:6,
-                    color:"rgba(255,255,255,0.85)", fontSize:13, textDecoration:"none",
-                    background:"rgba(255,255,255,0.12)", padding:"4px 12px",
-                    borderRadius:20, border:"1px solid rgba(255,255,255,0.2)",
-                  }}
-                >
-                  📲 {patient.phone}
-                </a>
-              </div>
-            )}
+      <div style={{background:"var(--ink)", color:"#fff", borderRadius:"var(--r)", padding:24, marginBottom:24, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12}}>
+        <div>
+          <div style={{fontFamily:"'DM Serif Display', serif", fontSize:24}}>{patient.name}</div>
+          <div style={{fontSize:12, color:"rgba(255,255,255,0.5)", marginTop:4}}>
+            차트 #{patient.chart_number}
+            {patient.gender && ` · ${patient.gender === "female" ? "여성" : "남성"}`}
+            {patient.birth_date && ` · ${patient.birth_date}`}
+            {patient.phone && ` · ${patient.phone}`}
           </div>
-          <div style={{display:"flex", gap:10, alignItems:"center"}}>
-            <button className="btn btn-secondary btn-sm" onClick={generatePDF} disabled={generating}
+        </div>
+        <div style={{display:"flex", gap:10, alignItems:"center", flexWrap:"wrap"}}>
+          <button className="btn btn-secondary btn-sm" onClick={generatePDF} disabled={generating}
+            style={{background:"rgba(255,255,255,0.15)", color:"#fff", border:"1px solid rgba(255,255,255,0.3)"}}>
+            {generating ? "생성 중..." : "🖨️ 리포트 PDF 출력"}
+          </button>
+          {patient.is_closed ? (
+            <button className="btn btn-sm btn-secondary" onClick={restorePatient}
               style={{background:"rgba(255,255,255,0.15)", color:"#fff", border:"1px solid rgba(255,255,255,0.3)"}}>
-              {generating ? "생성 중..." : "🖨️ 리포트 PDF 출력"}
+              🔄 종결 복원
             </button>
-            <span className="badge badge-success">👥 다이어트</span>
-          </div>
+          ) : (
+            <button className="btn btn-sm btn-danger" onClick={closePatient}>🔒 치료 종결</button>
+          )}
+          <span className="badge badge-success">👥 다이어트</span>
         </div>
       </div>
 
@@ -1444,7 +1361,6 @@ function PatientDetail({ patient, onBack, initialTab, currentUser }) {
           { key: "inbody",       label: "② 인바디 분석" },
           { key: "prescription", label: "③ 약 처방" },
           { key: "visit",        label: "④ 침구실 치료" },
-          { key: "call",         label: "⑤ 전화 기록" },
         ].map(t => (
           <button key={t.key} className={`tab ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>
             {t.label}
@@ -1456,7 +1372,6 @@ function PatientDetail({ patient, onBack, initialTab, currentUser }) {
       {tab === "inbody"       && <InbodyTab patient={patient} />}
       {tab === "prescription" && <PrescriptionTab patient={patient} />}
       {tab === "visit"        && <VisitTab patient={patient} />}
-      {tab === "call"         && <CallTab patient={patient} currentUser={currentUser} />}
     </div>
   );
 }
@@ -1515,10 +1430,12 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
   const [alerts, setAlerts] = useState({});
   const [selected, setSelected] = useState(null);
   const [initialTab, setInitialTab] = useState("measurement");
+  const [showClosed, setShowClosed] = useState(false);
+  const [closedPatients, setClosedPatients] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("patients").select("*, goals(*), packages(*), measurements(*)").order("created_at", { ascending: false });
+    const { data } = await supabase.from("patients").select("*, goals(*), packages(*), measurements(*)").eq("is_closed", false).order("created_at", { ascending: false });
     const { data: prescriptions } = await supabase.from("prescriptions").select("*, happycall_logs(*), prescription_updates(*)").eq("is_completed", false);
     const { data: allVisits } = await supabase.from("visits").select("patient_id, visited_at, treatment_types").order("visited_at", { ascending: false });
 
@@ -1535,6 +1452,7 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
       if (isTodayOrPast(reservationDate) && !reservationDone) alertMap[p.patient_id].push({ kind: "예약" });
     });
 
+    // 프리미엄 관리 13일 초과 체크
     const premiumByPatient = {};
     (allVisits || []).forEach(v => {
       if ((v.treatment_types || []).includes("premium")) {
@@ -1550,6 +1468,7 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
 
     setAlerts(alertMap);
 
+    // 정렬: 해피콜 대상 → 프리미엄 알림 → 나머지
     const sorted = [...(data || [])].sort((a, b) => {
       const aScore = (alertMap[a.id] || []).length > 0 ? 0 : premiumAlertSet.has(a.id) ? 1 : 2;
       const bScore = (alertMap[b.id] || []).length > 0 ? 0 : premiumAlertSet.has(b.id) ? 1 : 2;
@@ -1557,17 +1476,24 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
     }).map(p => ({ ...p, _premiumAlert: premiumAlertSet.has(p.id) }));
 
     setPatients(sorted);
+
+    // 종결 환자 별도 로드
+    const { data: closed } = await supabase.from("patients").select("*").eq("is_closed", true).order("created_at", { ascending: false });
+    setClosedPatients(closed || []);
+
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  // 대시보드에서 직접 환자+탭 선택 시 처리 — 한 번만 실행 후 초기화
   useEffect(() => {
     if (selectPatientId && patients.length > 0) {
       const found = patients.find(p => p.id === selectPatientId);
       if (found) {
         setSelected(found);
         setInitialTab(selectTab || "prescription");
+        // 처리 후 부모에게 초기화 요청
         if (onMounted) onMounted();
       }
     }
@@ -1577,14 +1503,7 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
     p.name?.includes(search) || p.chart_number?.includes(search)
   );
 
-  if (selected) return (
-    <PatientDetail
-      patient={selected}
-      initialTab={initialTab}
-      currentUser={currentUser}
-      onBack={() => { setSelected(null); load(); }}
-    />
-  );
+  if (selected) return <PatientDetail patient={selected} initialTab={initialTab} onBack={() => { setSelected(null); load(); }} />;
 
   return (
     <div>
@@ -1594,7 +1513,12 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
       </div>
       <div className="toolbar">
         <input className="search-input" placeholder="이름 또는 차트번호 검색" value={search} onChange={e => setSearch(e.target.value)} />
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ 신규 환자 등록</button>
+        <div style={{display:"flex", gap:8}}>
+          <button className="btn btn-secondary" onClick={() => setShowClosed(v => !v)}>
+            {showClosed ? "▲ 종결 환자 숨기기" : `📁 종결 환자 (${closedPatients.length}명)`}
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ 신규 환자 등록</button>
+        </div>
       </div>
 
       {loading ? <div className="empty">불러오는 중...</div> : (
@@ -1615,9 +1539,6 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
                       {goal?.constitution && <span style={{fontSize:13, fontWeight:500, color:"var(--info)", marginLeft:6}}>({goal.constitution})</span>}
                     </div>
                     <div className="patient-chart">차트 #{p.chart_number}</div>
-                    {p.phone && (
-                      <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:2}}>📲 {p.phone}</div>
-                    )}
                   </div>
                   <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
                     {todayAlerts.map((a, i) => (
@@ -1628,6 +1549,12 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
                     {hasPremiumAlert && (
                       <span className="badge badge-warn">🏥 프리미엄 재내원 필요</span>
                     )}
+                    <button className="btn btn-xs btn-secondary" onClick={async e => {
+                      e.stopPropagation();
+                      if (!window.confirm(`${p.name} 환자를 종결 처리하시겠습니까?\n종결 후 목록에서 숨겨지며 복원 가능합니다.`)) return;
+                      await supabase.from("patients").update({ is_closed: true }).eq("id", p.id);
+                      load();
+                    }}>종결</button>
                     <button className="btn btn-xs btn-danger" onClick={async e => {
                       e.stopPropagation();
                       if (!window.confirm(`${p.name} 환자를 삭제하시겠습니까?`)) return;
@@ -1658,6 +1585,44 @@ export default function DietPatients({ currentUser, selectPatientId, selectTab, 
           {filtered.length === 0 && <div className="empty">등록된 환자가 없습니다</div>}
         </div>
       )}
+
+      {/* 종결 환자 목록 */}
+      {showClosed && (
+        <div style={{marginTop:24}}>
+          <div style={{fontSize:14, fontWeight:700, color:"var(--ink-muted)", marginBottom:12, paddingBottom:8, borderBottom:"2px solid var(--border)"}}>
+            📁 종결 환자 ({closedPatients.length}명)
+          </div>
+          {closedPatients.length === 0 ? (
+            <div className="empty">종결 처리된 환자가 없습니다</div>
+          ) : (
+            <div className="patient-grid">
+              {closedPatients.map(p => (
+                <div key={p.id} className="patient-card" style={{opacity:0.7}}>
+                  <div className="patient-card-header">
+                    <div>
+                      <div className="patient-name">{p.name}</div>
+                      <div className="patient-chart">차트 #{p.chart_number}</div>
+                      <div style={{fontSize:12, color:"var(--ink-muted)", marginTop:4}}>
+                        {p.gender && `${p.gender === "female" ? "여성" : "남성"}`}
+                        {p.phone && ` · ${p.phone}`}
+                      </div>
+                    </div>
+                    <div style={{display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end"}}>
+                      <span className="badge badge-muted">종결</span>
+                      <button className="btn btn-xs btn-secondary" onClick={async () => {
+                        if (!window.confirm(`${p.name} 환자를 복원하시겠습니까?`)) return;
+                        await supabase.from("patients").update({ is_closed: false }).eq("id", p.id);
+                        load();
+                      }}>복원</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {showModal && <NewPatientModal onClose={() => { setShowModal(false); load(); }} />}
     </div>
   );
