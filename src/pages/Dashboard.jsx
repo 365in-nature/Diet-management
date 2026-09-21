@@ -353,6 +353,10 @@ export default function Dashboard({
   const load = useCallback(async () => {
     setLoading(true);
 
+    // 활성 다이어트 환자 id 집합 (종결 환자 제외용)
+    const { data: dietPts } = await supabase.from("patients").select("id").eq("is_closed", false);
+    const activeDietIds = new Set((dietPts || []).map(p => p.id));
+
     // 다이어트 처방
     const { data: dPrescriptions } = await supabase
       .from("prescriptions")
@@ -387,6 +391,7 @@ export default function Dashboard({
     (dPrescriptions || []).forEach(p => {
       const patient = p.patients;
       if (!patient) return;
+      if (!activeDietIds.has(patient.id)) return; // 종결 환자 제외
       const latestUpdate = (p.prescription_updates || []).sort((a,b) => b.created_at.localeCompare(a.created_at))[0];
       const reservationDate = latestUpdate ? latestUpdate.new_reservation_happycall_date : p.reservation_happycall_date;
       const arrivalHC = (p.happycall_logs || []).find(h => h.call_type === "arrival");
@@ -414,10 +419,11 @@ export default function Dashboard({
       }
     });
 
-    // 프리미엄 관리 13일 초과 알림
+    // 프리미엄 관리 13일 초과 알림 (종결 환자 제외)
     const premiumAlertSet = new Set();
     const premiumByPatient = {};
     (allVisits || []).forEach(v => {
+      if (!activeDietIds.has(v.patient_id)) return; // 종결 환자 제외
       if ((v.treatment_types || []).includes("premium")) {
         if (!premiumByPatient[v.patient_id] || v.visited_at > premiumByPatient[v.patient_id]) {
           premiumByPatient[v.patient_id] = v.visited_at;
@@ -431,6 +437,7 @@ export default function Dashboard({
 
     // 프리미엄 알림 해피콜 목록에 추가
     premiumAlertSet.forEach(pid => {
+      if (!activeDietIds.has(pid)) return; // 종결 환자 제외 (이중 안전장치)
       const patient = (dPrescriptions || []).find(p => p.patients?.id === pid)?.patients;
       if (!patient) return;
       allCalls.push({
