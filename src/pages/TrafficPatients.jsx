@@ -6,6 +6,22 @@ import {
   getConsecutiveMissedSlots, getHerbStatus, addDays, getWeekEncouragementStatus,
 } from "../lib/dateUtils";
 
+
+// =============================================
+// 심사 대상자 판정 (2026-09-10 이후 사고, 사고 다음날부터 7주차 진입 = 사고일 + 43일)
+// =============================================
+const REVIEW_LAW_START = "2026-09-10";
+const REVIEW_START_OFFSET = 43;
+function isReviewTarget(patient, targetDate) {
+  if (!patient || !patient.accident_date || patient.review_declined) return false;
+  if (patient.accident_date < REVIEW_LAW_START) return false;
+  return diffDays(patient.accident_date, targetDate) >= REVIEW_START_OFFSET;
+}
+const reviewTagStyle = {
+  background:"#f3e8ff", color:"#6b21a8", fontSize:11, fontWeight:700,
+  padding:"2px 8px", borderRadius:20, border:"1px solid #d8b4fe",
+};
+
 // =============================================
 // 치료 구간 라벨
 // =============================================
@@ -330,6 +346,48 @@ function InfoTab({ patient, onUpdate }) {
           </button>
         </div>
       </div>
+
+      {/* 심사 대상 설정 */}
+      {(() => {
+        const eligibleLaw = patient.accident_date && patient.accident_date >= REVIEW_LAW_START;
+        const startDate = patient.accident_date ? addDays(patient.accident_date, REVIEW_START_OFFSET) : null;
+        const reviewNow = isReviewTarget(patient, today());
+        return (
+          <div className="card" style={{marginBottom:16}}>
+            <div className="section-header">
+              <div className="section-title">📋 심사 대상 설정</div>
+              {reviewNow && <span style={reviewTagStyle}>📋 심사 대상자</span>}
+            </div>
+            {!eligibleLaw ? (
+              <div style={{fontSize:13, color:"var(--ink-muted)"}}>
+                {REVIEW_LAW_START} 이후 사고 환자만 7주차 추가 진료 심사 대상입니다. 이 환자는 해당되지 않습니다.
+              </div>
+            ) : (
+              <>
+                <div style={{marginBottom:12, fontSize:13, color:"var(--ink-muted)"}}>
+                  사고 다음날부터 7주차에 들어서는 날({formatDate(startDate)})부터 심사 대상자로 표시됩니다.
+                  {startDate > today() && ` (D-${diffDays(today(), startDate)})`}
+                </div>
+                <label className="form-check" style={{cursor:"pointer"}}>
+                  <input
+                    type="checkbox"
+                    checked={patient.review_declined || false}
+                    onChange={async (e) => {
+                      const newVal = e.target.checked;
+                      if (!window.confirm(newVal ? "심사를 원치 않으시는 환자로 설정하시겠습니까?\n(심사 대상자) 표시가 해제됩니다." : "심사 원치 않으심을 해제하시겠습니까?")) return;
+                      const { error } = await supabase.from("traffic_patients").update({ review_declined: newVal }).eq("id", patient.id);
+                      if (error) { alert("저장 실패: " + error.message); return; }
+                      onUpdate();
+                    }}
+                    style={{width:16, height:16, cursor:"pointer", accentColor:"var(--traffic)"}}
+                  />
+                  <span style={{fontWeight: patient.review_declined ? 700 : 400}}>심사 원치 않으심</span>
+                </label>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 중증 여부 */}
       <div className="card" style={{marginBottom:16}}>
@@ -699,6 +757,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
             <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:6}}>
               <span className="badge badge-traffic">🚗 교통사고</span>
               {patient.is_severe && <span className="badge badge-traffic">🦴 중증</span>}
+              {isReviewTarget(patient, today()) && <span style={reviewTagStyle}>📋 심사 대상자</span>}
             </div>
             <div style={{fontFamily:"'DM Serif Display', serif", fontSize:24}}>{patient.name}</div>
             <div style={{fontSize:12, color:"rgba(255,255,255,0.5)", marginTop:4}}>
@@ -1005,6 +1064,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
                     <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:4}}>
                       <ZoneBadge zone={zone} />
                       {p.is_severe && <span className="badge badge-traffic">🦴 중증</span>}
+                      {isReviewTarget(p, today()) && <span style={reviewTagStyle}>📋 심사 대상자</span>}
                     </div>
                     <div className="patient-name">{p.name}</div>
                     <div className="patient-chart">차트 #{p.chart_number}</div>

@@ -6,6 +6,22 @@ import {
   getWeekRange, getTreatmentZone, getWeekEncouragementStatus,
 } from "../lib/dateUtils";
 
+
+// =============================================
+// 심사 대상자 판정 (2026-09-10 이후 사고, 사고 다음날부터 7주차 진입 = 사고일 + 43일)
+// =============================================
+const REVIEW_LAW_START = "2026-09-10";
+const REVIEW_START_OFFSET = 43;
+function isReviewTarget(patient, targetDate) {
+  if (!patient || !patient.accident_date || patient.review_declined) return false;
+  if (patient.accident_date < REVIEW_LAW_START) return false;
+  return diffDays(patient.accident_date, targetDate) >= REVIEW_START_OFFSET;
+}
+const reviewTagStyle = {
+  background:"#f3e8ff", color:"#6b21a8", fontSize:11, fontWeight:700,
+  padding:"2px 8px", borderRadius:20, border:"1px solid #d8b4fe",
+};
+
 // =============================================
 // 미니 달력
 // =============================================
@@ -252,12 +268,14 @@ function HappycallCard({ item, onToggle, onNoAnswer, onNavigate }) {
 // =============================================
 // 교통사고 내원 카드
 // =============================================
-function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, onCallLog }) {
+function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, onCallLog, onDeclineReview }) {
   const visitDates = visits.map(v => v.visit_date);
   const dateVisited = visitDates.includes(targetDate);
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
   const herbStatus = getHerbStatus(patient.herb_prescriptions || []);
   const isRefused = patient.herb_refused;
+  const reviewTarget = isReviewTarget(patient, targetDate);
+  const canTreat = canTreatToday(patient.accident_date, patient.is_severe, visitDates, targetDate);
 
   // 주기 및 이번 주 내원 횟수 계산
   const { zone, maxPerWeek } = getTreatmentZone(patient.accident_date, targetDate, patient.is_severe);
@@ -279,8 +297,8 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
     : { background:"var(--color-background-success,#EAF3DE)", color:"var(--color-text-success,#3B6D11)" };
 
   // 카드 테두리: 미내원 경고 > 독려 > 기본
-  const borderColor = missedSlots >= 3 ? "#f5c6bd" : encourage.shouldEncourage ? "#b8d4f0" : "var(--border)";
-  const bgColor     = missedSlots >= 3 ? "#fffaf9"  : encourage.shouldEncourage ? "#f0f7ff"  : "var(--surface)";
+  const borderColor = reviewTarget ? "#d8b4fe" : missedSlots >= 3 ? "#f5c6bd" : encourage.shouldEncourage ? "#b8d4f0" : "var(--border)";
+  const bgColor     = reviewTarget ? "#faf5ff"  : missedSlots >= 3 ? "#fffaf9"  : encourage.shouldEncourage ? "#f0f7ff"  : "var(--surface)";
 
   return (
     <div style={{
@@ -291,6 +309,13 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
         <div>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+            {/* 심사 대상자 */}
+            {reviewTarget && (
+              <div style={{display:"flex", alignItems:"center", gap:6}}>
+                <span style={reviewTagStyle}>📋 심사 대상자</span>
+                <button className="btn btn-xs btn-secondary" onClick={e => { e.stopPropagation(); onDeclineReview(patient); }}>심사 원치 않으심</button>
+              </div>
+            )}
             {/* 미내원 경고 */}
             {missedSlots >= 3 && (
               <div style={{display:"flex", alignItems:"center", gap:6}}>
@@ -324,12 +349,18 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
             </span>
           </div>
         </div>
-        <button
-          className={`visit-btn ${dateVisited?"visited":"not-visited"}`}
-          onClick={e => { e.stopPropagation(); onToggle(patient, dateVisited); }}
-        >
-          {dateVisited ? "✅ 내원" : "○ 내원 확인"}
-        </button>
+        {(canTreat || dateVisited) ? (
+          <button
+            className={`visit-btn ${dateVisited?"visited":"not-visited"}`}
+            onClick={e => { e.stopPropagation(); onToggle(patient, dateVisited); }}
+          >
+            {dateVisited ? "✅ 내원" : "○ 내원 확인"}
+          </button>
+        ) : (
+          <div style={{ fontSize:12, color:"var(--ink-muted)", padding:"6px 10px", textAlign:"center", minWidth:90 }}>
+            치료 횟수 완료
+          </div>
+        )}
       </div>
     </div>
   );
@@ -468,13 +499,17 @@ export default function Dashboard({
 
   useEffect(() => { load(); }, [load]);
 
-  // 선택 날짜 기준 교통사고 치료 가능 환자 — 미내원 많은 순 정렬
+  // 선택 날짜 기준 교통사고 치료 가능 환자 + 심사 대상자 — 심사 대상자 최상단, 이후 미내원 많은 순 정렬
   const trafficToday = trafficPatients
     .filter(p => {
       const visits = (trafficVisits[p.id] || []).map(v => v.visit_date);
-      return canTreatToday(p.accident_date, p.is_severe, visits, selectedDate);
+      return canTreatToday(p.accident_date, p.is_severe, visits, selectedDate) || isReviewTarget(p, selectedDate);
     })
     .sort((a, b) => {
+      // 0순위: 심사 대상자 (미내원 환자보다 위)
+      const aRev = isReviewTarget(a, selectedDate) ? 1 : 0;
+      const bRev = isReviewTarget(b, selectedDate) ? 1 : 0;
+      if (bRev !== aRev) return bRev - aRev;
       const aVisits = (trafficVisits[a.id] || []).map(v => v.visit_date);
       const bVisits = (trafficVisits[b.id] || []).map(v => v.visit_date);
       const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
@@ -492,6 +527,19 @@ export default function Dashboard({
       // 4순위: 나머지는 차트번호 높은 순
       return Number(b.chart_number) - Number(a.chart_number);
     });
+
+  const reviewCount = trafficToday.filter(p => isReviewTarget(p, selectedDate)).length;
+  const treatCount = trafficToday.filter(p =>
+    canTreatToday(p.accident_date, p.is_severe, (trafficVisits[p.id] || []).map(v => v.visit_date), selectedDate)
+  ).length;
+
+  // 심사 원치 않으심 — 태그 해제 (환자 정보 탭에서 복원 가능)
+  const handleDeclineReview = async (patient) => {
+    if (!window.confirm(`${patient.name} 환자가 심사를 원치 않으시나요?\n(심사 대상자) 표시가 해제됩니다. 환자 정보 탭에서 복원할 수 있습니다.`)) return;
+    const { error } = await supabase.from("traffic_patients").update({ review_declined: true }).eq("id", patient.id);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    load();
+  };
 
   // 해피콜 완료 토글
   const handleToggle = async (item) => {
@@ -590,7 +638,7 @@ export default function Dashboard({
             <span style={{ fontSize:18 }}>🚗</span>
             <span style={{ fontSize:16, fontWeight:700 }}>교통사고 환자</span>
             <span style={{ fontSize:12, color:"var(--ink-muted)" }}>
-              {isToday ? "오늘" : formatDate(selectedDate)} 치료 가능 {trafficToday.length}명
+              {isToday ? "오늘" : formatDate(selectedDate)} 치료 가능 {treatCount}명{reviewCount > 0 && ` · 심사 대상 ${reviewCount}명`}
             </span>
           </div>
           {!isToday && (
@@ -612,6 +660,7 @@ export default function Dashboard({
                   onToggle={handleToggleVisit}
                   onNavigate={() => onSelectTrafficPatient(p.id)}
                   onCallLog={setCallModalPatient}
+                  onDeclineReview={handleDeclineReview}
                 />
               ))}
             </div>
