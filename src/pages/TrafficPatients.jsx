@@ -963,8 +963,11 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
       visitMap[v.patient_id].push(v);
     });
 
-    // 정렬: 3회 연속 미내원 → 오늘 치료 가능 → 나머지
+    // 정렬: 심사 대상자 → 3회 연속 미내원 → 오늘 치료 가능 → 나머지
     const sorted = [...(pts || [])].sort((a, b) => {
+      const aRev = isReviewTarget(a, today()) ? 0 : 1;
+      const bRev = isReviewTarget(b, today()) ? 0 : 1;
+      if (aRev !== bRev) return aRev - bRev;
       const aVisits = (visitMap[a.id] || []).map(v => v.visit_date);
       const bVisits = (visitMap[b.id] || []).map(v => v.visit_date);
       const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits) >= 3 ? 0 : 1;
