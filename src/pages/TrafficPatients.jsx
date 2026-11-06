@@ -4,23 +4,21 @@ import {
   today, formatDate, formatDateKo, diffDays,
   getTreatmentZone, getWeekRange, canTreatToday,
   getConsecutiveMissedSlots, getHerbStatus, addDays, getWeekEncouragementStatus,
+  REVIEW_LAW_START, REVIEW_START_OFFSET, REVIEW_DECLINE_CONVERT_OFFSET,
+  getReviewStatus, getReviewBadgeInfo,
 } from "../lib/dateUtils";
 
-
 // =============================================
-// 심사 대상자 판정 (2026-09-10 이후 사고, 사고 다음날부터 7주차 진입 = 사고일 + 43일)
+// 심사 상태 배지 (심사 대상 / 심사 중 / 불승인 / 연장 / 건강보험 전환 요망)
 // =============================================
-const REVIEW_LAW_START = "2026-09-10";
-const REVIEW_START_OFFSET = 43;
-function isReviewTarget(patient, targetDate) {
-  if (!patient || !patient.accident_date || patient.review_declined) return false;
-  if (patient.accident_date < REVIEW_LAW_START) return false;
-  return diffDays(patient.accident_date, targetDate) >= REVIEW_START_OFFSET;
+function ReviewBadge({ patient }) {
+  const info = getReviewBadgeInfo(getReviewStatus(patient, today()));
+  if (!info) return null;
+  return <span style={info.style}>{info.label}</span>;
 }
-const reviewTagStyle = {
-  background:"#f3e8ff", color:"#6b21a8", fontSize:11, fontWeight:700,
-  padding:"2px 8px", borderRadius:20, border:"1px solid #d8b4fe",
-};
+
+// 심사 결과 라벨
+const REVIEW_RESULT_LABEL = { pending: "결과 대기", extended: "연장됨", rejected: "불승인" };
 
 // =============================================
 // 치료 구간 라벨
@@ -232,6 +230,220 @@ function VisitTab({ patient, visits, onVisitChange }) {
 }
 
 // =============================================
+// 심사 이력 한 줄 (제출일 / 결과 / 연장일 수정·삭제)
+// =============================================
+function ReviewRow({ r, onChanged }) {
+  const [submittedAt, setSubmittedAt] = useState(r.submitted_at || "");
+  const [result, setResult] = useState(r.result);
+  const [until, setUntil] = useState(r.extended_until || "");
+  const [saving, setSaving] = useState(false);
+
+  const dirty =
+    submittedAt !== (r.submitted_at || "") ||
+    result !== r.result ||
+    (result === "extended" && until !== (r.extended_until || ""));
+
+  const save = async () => {
+    if (!submittedAt) { alert("제출일을 입력해주세요."); return; }
+    if (result === "extended" && !until) { alert("연장된 날짜를 입력해주세요."); return; }
+    setSaving(true);
+    const { error } = await supabase.from("traffic_reviews").update({
+      submitted_at: submittedAt,
+      result,
+      extended_until: result === "extended" ? until : null,
+    }).eq("id", r.id);
+    setSaving(false);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    onChanged();
+  };
+
+  const remove = async () => {
+    if (!window.confirm(`${r.round === 1 ? "1차 심사" : `재심사 ${r.round - 1}차`} 기록을 삭제하시겠습니까?`)) return;
+    const { error } = await supabase.from("traffic_reviews").delete().eq("id", r.id);
+    if (error) { alert("삭제 실패: " + error.message); return; }
+    onChanged();
+  };
+
+  const resultColor = { pending: "var(--ink-muted)", extended: "#1e7a3c", rejected: "#b42318" }[result];
+
+  return (
+    <div style={{background:"var(--surface2)", border:"1px solid var(--border)", borderRadius:"var(--r-sm)", padding:"12px 14px"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+        <strong style={{fontSize:13}}>{r.round === 1 ? "1차 심사" : `재심사 ${r.round - 1}차`}</strong>
+        <span style={{fontSize:12, fontWeight:700, color:resultColor}}>{REVIEW_RESULT_LABEL[result]}</span>
+      </div>
+      <div className="form-grid">
+        <div className="form-group">
+          <label className="form-label">서류 제출일</label>
+          <input className="form-input" type="date" value={submittedAt} onChange={e => setSubmittedAt(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">결과</label>
+          <select className="form-select" value={result} onChange={e => setResult(e.target.value)}>
+            <option value="pending">결과 대기</option>
+            <option value="extended">연장됨</option>
+            <option value="rejected">불승인</option>
+          </select>
+        </div>
+        {result === "extended" && (
+          <div className="form-group form-full">
+            <label className="form-label">연장된 날짜 (이 날짜까지 치료 가능)</label>
+            <input className="form-input" type="date" value={until} onChange={e => setUntil(e.target.value)} />
+          </div>
+        )}
+      </div>
+      <div className="form-actions">
+        <button className="btn btn-xs btn-danger" onClick={remove}>삭제</button>
+        <button className="btn btn-primary btn-sm" onClick={save} disabled={saving || !dirty}>
+          {saving ? "저장 중..." : "저장"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =============================================
+// 심사 이력 카드
+// =============================================
+function ReviewCard({ patient, onUpdate }) {
+  const [showForm, setShowForm] = useState(false);
+  const [submittedAt, setSubmittedAt] = useState(today());
+  const [saving, setSaving] = useState(false);
+
+  const eligibleLaw = patient.accident_date && patient.accident_date >= REVIEW_LAW_START;
+  const status = getReviewStatus(patient, today());
+  const reviews = [...(patient.traffic_reviews || [])].sort((a, b) => a.round - b.round);
+  const latest = reviews.length ? reviews[reviews.length - 1] : null;
+  const nextRound = (latest ? latest.round : 0) + 1;
+  const canSubmit = !patient.review_declined && (!latest || latest.result === "rejected");
+
+  const startDate = patient.accident_date ? addDays(patient.accident_date, REVIEW_START_OFFSET) : null;
+  const convertDate = patient.accident_date ? addDays(patient.accident_date, REVIEW_DECLINE_CONVERT_OFFSET) : null;
+
+  const handleSubmit = async () => {
+    if (!submittedAt) { alert("제출일을 입력해주세요."); return; }
+    setSaving(true);
+    const { error } = await supabase.from("traffic_reviews").insert([{
+      patient_id: patient.id,
+      round: nextRound,
+      submitted_at: submittedAt,
+      result: "pending",
+    }]);
+    setSaving(false);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    setShowForm(false);
+    setSubmittedAt(today());
+    onUpdate();
+  };
+
+  const toggleDeclined = async (e) => {
+    const newVal = e.target.checked;
+    const msg = newVal
+      ? `심사를 원치 않으시는 환자로 설정하시겠습니까?\n(심사 대상자) 표시가 해제되고, 사고일로부터 8주(${formatDate(convertDate)})가 지나면 '건강보험 전환 요망'으로 표시됩니다.`
+      : "심사 원치 않으심을 해제하시겠습니까?";
+    if (!window.confirm(msg)) return;
+    const { error } = await supabase.from("traffic_patients").update({ review_declined: newVal }).eq("id", patient.id);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    onUpdate();
+  };
+
+  const badge = getReviewBadgeInfo(status);
+
+  return (
+    <div className="card" style={{marginBottom:16}}>
+      <div className="section-header">
+        <div className="section-title">📋 심사 이력</div>
+        {badge && <span style={badge.style}>{badge.label}</span>}
+      </div>
+
+      {!eligibleLaw ? (
+        <div style={{fontSize:13, color:"var(--ink-muted)"}}>
+          {REVIEW_LAW_START} 이후 사고 환자만 7주차 추가 진료 심사 대상입니다. 이 환자는 해당되지 않습니다.
+        </div>
+      ) : (
+        <>
+          <div style={{marginBottom:12, fontSize:13, color:"var(--ink-muted)"}}>
+            사고 다음날부터 7주차에 들어서는 날({formatDate(startDate)})부터 심사 대상자로 표시됩니다.
+            {startDate > today() && ` (D-${diffDays(today(), startDate)})`}
+          </div>
+
+          {status.key === "convert" && (
+            <div className="alert-banner" style={{marginBottom:12, background:"#fff3e0", borderColor:"#fdba74", color:"#c2410c"}}>
+              🔄 {status.convertReason === "extension_expired"
+                ? `연장일(${formatDate(status.extendedUntil)})이 지났습니다.`
+                : `심사를 원치 않으셨고 사고일로부터 8주(${formatDate(convertDate)})가 지났습니다.`}
+              {" "}건강보험으로 전환해 주세요. 전환 후에는 상단의 [치료 종결] 버튼으로 종결 처리하면 됩니다.
+            </div>
+          )}
+          {status.key === "rejected" && (
+            <div style={{marginBottom:12, fontSize:13, color:"#b42318", fontWeight:600}}>
+              불승인되었습니다. 불복 시 아래 [재심사 제출]로 다시 요청할 수 있습니다 (횟수 제한 없음).
+            </div>
+          )}
+
+          {/* 이력 */}
+          {reviews.length > 0 && (
+            <div style={{display:"flex", flexDirection:"column", gap:10, marginBottom:12}}>
+              {reviews.map(r => (
+                <ReviewRow
+                  key={`${r.id}-${r.submitted_at}-${r.result}-${r.extended_until || ""}`}
+                  r={r}
+                  onChanged={onUpdate}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* 제출 추가 */}
+          {canSubmit && (
+            <div style={{marginBottom:12}}>
+              {!showForm ? (
+                <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>
+                  {latest ? "+ 재심사 제출" : "+ 심사 서류 제출"}
+                </button>
+              ) : (
+                <div style={{padding:"12px 16px", background:"var(--surface2)", borderRadius:"var(--r-sm)", border:"1px solid var(--border)"}}>
+                  <div className="form-group">
+                    <label className="form-label">
+                      {latest ? `재심사 ${nextRound - 1}차` : "1차 심사"} 서류 제출일
+                    </label>
+                    <input className="form-input" type="date" value={submittedAt} onChange={e => setSubmittedAt(e.target.value)} />
+                  </div>
+                  <div className="form-actions">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>취소</button>
+                    <button className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={saving}>
+                      {saving ? "저장 중..." : "제출 기록"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 심사 원치 않으심 (제출 이력이 없을 때만) */}
+          {!latest && (
+            <label className="form-check" style={{cursor:"pointer"}}>
+              <input
+                type="checkbox"
+                checked={patient.review_declined || false}
+                onChange={toggleDeclined}
+                style={{width:16, height:16, cursor:"pointer", accentColor:"var(--traffic)"}}
+              />
+              <span style={{fontWeight: patient.review_declined ? 700 : 400}}>심사 원치 않으심</span>
+              {patient.review_declined && (
+                <span style={{fontSize:11, color:"var(--ink-muted)", marginLeft:4}}>
+                  — {formatDate(convertDate)}부터 건강보험 전환 요망 표시
+                </span>
+              )}
+            </label>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// =============================================
 // 환자 정보 탭 (기본 정보 + 자보 한약 + 중증 설정)
 // =============================================
 function InfoTab({ patient, onUpdate }) {
@@ -347,47 +559,9 @@ function InfoTab({ patient, onUpdate }) {
         </div>
       </div>
 
-      {/* 심사 대상 설정 */}
-      {(() => {
-        const eligibleLaw = patient.accident_date && patient.accident_date >= REVIEW_LAW_START;
-        const startDate = patient.accident_date ? addDays(patient.accident_date, REVIEW_START_OFFSET) : null;
-        const reviewNow = isReviewTarget(patient, today());
-        return (
-          <div className="card" style={{marginBottom:16}}>
-            <div className="section-header">
-              <div className="section-title">📋 심사 대상 설정</div>
-              {reviewNow && <span style={reviewTagStyle}>📋 심사 대상자</span>}
-            </div>
-            {!eligibleLaw ? (
-              <div style={{fontSize:13, color:"var(--ink-muted)"}}>
-                {REVIEW_LAW_START} 이후 사고 환자만 7주차 추가 진료 심사 대상입니다. 이 환자는 해당되지 않습니다.
-              </div>
-            ) : (
-              <>
-                <div style={{marginBottom:12, fontSize:13, color:"var(--ink-muted)"}}>
-                  사고 다음날부터 7주차에 들어서는 날({formatDate(startDate)})부터 심사 대상자로 표시됩니다.
-                  {startDate > today() && ` (D-${diffDays(today(), startDate)})`}
-                </div>
-                <label className="form-check" style={{cursor:"pointer"}}>
-                  <input
-                    type="checkbox"
-                    checked={patient.review_declined || false}
-                    onChange={async (e) => {
-                      const newVal = e.target.checked;
-                      if (!window.confirm(newVal ? "심사를 원치 않으시는 환자로 설정하시겠습니까?\n(심사 대상자) 표시가 해제됩니다." : "심사 원치 않으심을 해제하시겠습니까?")) return;
-                      const { error } = await supabase.from("traffic_patients").update({ review_declined: newVal }).eq("id", patient.id);
-                      if (error) { alert("저장 실패: " + error.message); return; }
-                      onUpdate();
-                    }}
-                    style={{width:16, height:16, cursor:"pointer", accentColor:"var(--traffic)"}}
-                  />
-                  <span style={{fontWeight: patient.review_declined ? 700 : 400}}>심사 원치 않으심</span>
-                </label>
-              </>
-            )}
-          </div>
-        );
-      })()}
+      {/* 심사 이력 */}
+      <ReviewCard patient={patient} onUpdate={onUpdate} />
+      
 
       {/* 중증 여부 */}
       <div className="card" style={{marginBottom:16}}>
@@ -729,7 +903,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
   const [visits, setVisits] = useState(initialVisits);
 
   const refreshPatient = async () => {
-    const { data } = await supabase.from("traffic_patients").select("*, herb_prescriptions(*)").eq("id", patient.id).single();
+    const { data } = await supabase.from("traffic_patients").select("*, herb_prescriptions(*), traffic_reviews(*)").eq("id", patient.id).single();
     if (data) setPatient(data);
     onUpdate();
   };
@@ -757,7 +931,7 @@ function PatientDetail({ patient: initialPatient, visits: initialVisits, onBack,
             <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:6}}>
               <span className="badge badge-traffic">🚗 교통사고</span>
               {patient.is_severe && <span className="badge badge-traffic">🦴 중증</span>}
-              {isReviewTarget(patient, today()) && <span style={reviewTagStyle}>📋 심사 대상자</span>}
+              <ReviewBadge patient={patient} />
             </div>
             <div style={{fontFamily:"'DM Serif Display', serif", fontSize:24}}>{patient.name}</div>
             <div style={{fontSize:12, color:"rgba(255,255,255,0.5)", marginTop:4}}>
@@ -948,7 +1122,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
     setLoading(true);
     const { data: pts } = await supabase
       .from("traffic_patients")
-      .select("*, herb_prescriptions(*)")
+      .select("*, herb_prescriptions(*), traffic_reviews(*)")
       .eq("is_closed", false)
       .order("created_at", { ascending: false });
 
@@ -963,10 +1137,10 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
       visitMap[v.patient_id].push(v);
     });
 
-    // 정렬: 심사 대상자 → 3회 연속 미내원 → 오늘 치료 가능 → 나머지
+    // 정렬: 심사 대상자(심사 중·불승인 포함) → 건강보험 전환 요망 → 3회 연속 미내원 → 오늘 치료 가능 → 나머지
     const sorted = [...(pts || [])].sort((a, b) => {
-      const aRev = isReviewTarget(a, today()) ? 0 : 1;
-      const bRev = isReviewTarget(b, today()) ? 0 : 1;
+      const aRev = getReviewStatus(a, today()).rank;
+      const bRev = getReviewStatus(b, today()).rank;
       if (aRev !== bRev) return aRev - bRev;
       const aVisits = (visitMap[a.id] || []).map(v => v.visit_date);
       const bVisits = (visitMap[b.id] || []).map(v => v.visit_date);
@@ -1067,7 +1241,7 @@ export default function TrafficPatients({ currentUser, selectPatientId, onMounte
                     <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:4}}>
                       <ZoneBadge zone={zone} />
                       {p.is_severe && <span className="badge badge-traffic">🦴 중증</span>}
-                      {isReviewTarget(p, today()) && <span style={reviewTagStyle}>📋 심사 대상자</span>}
+                      <ReviewBadge patient={p} />
                     </div>
                     <div className="patient-name">{p.name}</div>
                     <div className="patient-chart">차트 #{p.chart_number}</div>

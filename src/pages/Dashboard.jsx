@@ -4,23 +4,8 @@ import {
   today, formatDate, isTodayOrPast, diffDays, addDays,
   canTreatToday, getConsecutiveMissedSlots, getHerbStatus,
   getWeekRange, getTreatmentZone, getWeekEncouragementStatus,
+  getReviewStatus, getReviewBadgeInfo,
 } from "../lib/dateUtils";
-
-
-// =============================================
-// 심사 대상자 판정 (2026-09-10 이후 사고, 사고 다음날부터 7주차 진입 = 사고일 + 43일)
-// =============================================
-const REVIEW_LAW_START = "2026-09-10";
-const REVIEW_START_OFFSET = 43;
-function isReviewTarget(patient, targetDate) {
-  if (!patient || !patient.accident_date || patient.review_declined) return false;
-  if (patient.accident_date < REVIEW_LAW_START) return false;
-  return diffDays(patient.accident_date, targetDate) >= REVIEW_START_OFFSET;
-}
-const reviewTagStyle = {
-  background:"#f3e8ff", color:"#6b21a8", fontSize:11, fontWeight:700,
-  padding:"2px 8px", borderRadius:20, border:"1px solid #d8b4fe",
-};
 
 // =============================================
 // 미니 달력
@@ -268,13 +253,16 @@ function HappycallCard({ item, onToggle, onNoAnswer, onNavigate }) {
 // =============================================
 // 교통사고 내원 카드
 // =============================================
-function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, onCallLog, onDeclineReview }) {
+function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, onCallLog, onDeclineReview, onClose }) {
   const visitDates = visits.map(v => v.visit_date);
   const dateVisited = visitDates.includes(targetDate);
   const missedSlots = getConsecutiveMissedSlots(patient.accident_date, patient.is_severe, visitDates);
   const herbStatus = getHerbStatus(patient.herb_prescriptions || []);
   const isRefused = patient.herb_refused;
-  const reviewTarget = isReviewTarget(patient, targetDate);
+  const reviewStatus = getReviewStatus(patient, targetDate);
+  const reviewBadge = getReviewBadgeInfo(reviewStatus);
+  const reviewTarget = reviewStatus.rank === 1;   // 심사 대상 / 심사 중 / 불승인
+  const convertNeeded = reviewStatus.rank === 2;  // 건강보험 전환 요망
   const canTreat = canTreatToday(patient.accident_date, patient.is_severe, visitDates, targetDate);
 
   // 주기 및 이번 주 내원 횟수 계산
@@ -297,8 +285,8 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
     : { background:"var(--color-background-success,#EAF3DE)", color:"var(--color-text-success,#3B6D11)" };
 
   // 카드 테두리: 미내원 경고 > 독려 > 기본
-  const borderColor = reviewTarget ? "#d8b4fe" : missedSlots >= 3 ? "#f5c6bd" : encourage.shouldEncourage ? "#b8d4f0" : "var(--border)";
-  const bgColor     = reviewTarget ? "#faf5ff"  : missedSlots >= 3 ? "#fffaf9"  : encourage.shouldEncourage ? "#f0f7ff"  : "var(--surface)";
+  const borderColor = reviewTarget ? "#d8b4fe" : convertNeeded ? "#fdba74" : missedSlots >= 3 ? "#f5c6bd" : encourage.shouldEncourage ? "#b8d4f0" : "var(--border)";
+  const bgColor     = reviewTarget ? "#faf5ff"  : convertNeeded ? "#fffaf3"  : missedSlots >= 3 ? "#fffaf9"  : encourage.shouldEncourage ? "#f0f7ff"  : "var(--surface)";
 
   return (
     <div style={{
@@ -309,11 +297,16 @@ function TrafficTodayCard({ patient, visits, targetDate, onToggle, onNavigate, o
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
         <div>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
-            {/* 심사 대상자 */}
-            {reviewTarget && (
+            {/* 심사 상태 (심사 대상자 / 심사 중 / 불승인 / 연장 / 건강보험 전환 요망) */}
+            {reviewBadge && (
               <div style={{display:"flex", alignItems:"center", gap:6}}>
-                <span style={reviewTagStyle}>📋 심사 대상자</span>
-                <button className="btn btn-xs btn-secondary" onClick={e => { e.stopPropagation(); onDeclineReview(patient); }}>심사 원치 않으심</button>
+                <span style={reviewBadge.style}>{reviewBadge.label}</span>
+                {reviewStatus.key === "target" && (
+                  <button className="btn btn-xs btn-secondary" onClick={e => { e.stopPropagation(); onDeclineReview(patient); }}>심사 원치 않으심</button>
+                )}
+                {convertNeeded && (
+                  <button className="btn btn-xs btn-danger" onClick={e => { e.stopPropagation(); onClose(patient); }}>🔒 종결</button>
+                )}
               </div>
             )}
             {/* 미내원 경고 */}
@@ -407,7 +400,7 @@ export default function Dashboard({
       .eq("is_completed", false);
 
     // 교통사고 환자 (종결 제외)
-    const { data: trPatients } = await supabase.from("traffic_patients").select("*, herb_prescriptions(*)").eq("is_closed", false).order("created_at", { ascending: false });
+    const { data: trPatients } = await supabase.from("traffic_patients").select("*, herb_prescriptions(*), traffic_reviews(*)").eq("is_closed", false).order("created_at", { ascending: false });
     const { data: trVisits } = await supabase.from("traffic_visits").select("*").order("visit_date", { ascending: false });
 
     const visitMap = {};
@@ -499,17 +492,18 @@ export default function Dashboard({
 
   useEffect(() => { load(); }, [load]);
 
-  // 선택 날짜 기준 교통사고 치료 가능 환자 + 심사 대상자 — 심사 대상자 최상단, 이후 미내원 많은 순 정렬
+  // 선택 날짜 기준 교통사고 치료 가능 환자 + 심사 관련 환자 + 건강보험 전환 요망 환자
+  // 정렬: 심사 대상자(심사 중·불승인 포함) → 건강보험 전환 요망 → 미내원 많은 순 ...
   const trafficToday = trafficPatients
     .filter(p => {
       const visits = (trafficVisits[p.id] || []).map(v => v.visit_date);
-      return canTreatToday(p.accident_date, p.is_severe, visits, selectedDate) || isReviewTarget(p, selectedDate);
+      return canTreatToday(p.accident_date, p.is_severe, visits, selectedDate) || getReviewStatus(p, selectedDate).rank <= 2;
     })
     .sort((a, b) => {
-      // 0순위: 심사 대상자 (미내원 환자보다 위)
-      const aRev = isReviewTarget(a, selectedDate) ? 1 : 0;
-      const bRev = isReviewTarget(b, selectedDate) ? 1 : 0;
-      if (bRev !== aRev) return bRev - aRev;
+      // 0순위: 심사 대상자(1) → 건강보험 전환 요망(2) → 그 외(9)
+      const aRev = getReviewStatus(a, selectedDate).rank;
+      const bRev = getReviewStatus(b, selectedDate).rank;
+      if (aRev !== bRev) return aRev - bRev;
       const aVisits = (trafficVisits[a.id] || []).map(v => v.visit_date);
       const bVisits = (trafficVisits[b.id] || []).map(v => v.visit_date);
       const aMissed = getConsecutiveMissedSlots(a.accident_date, a.is_severe, aVisits);
@@ -528,15 +522,24 @@ export default function Dashboard({
       return Number(b.chart_number) - Number(a.chart_number);
     });
 
-  const reviewCount = trafficToday.filter(p => isReviewTarget(p, selectedDate)).length;
+  const reviewCount = trafficToday.filter(p => getReviewStatus(p, selectedDate).rank === 1).length;
+  const convertCount = trafficToday.filter(p => getReviewStatus(p, selectedDate).rank === 2).length;
   const treatCount = trafficToday.filter(p =>
     canTreatToday(p.accident_date, p.is_severe, (trafficVisits[p.id] || []).map(v => v.visit_date), selectedDate)
   ).length;
 
   // 심사 원치 않으심 — 태그 해제 (환자 정보 탭에서 복원 가능)
   const handleDeclineReview = async (patient) => {
-    if (!window.confirm(`${patient.name} 환자가 심사를 원치 않으시나요?\n(심사 대상자) 표시가 해제됩니다. 환자 정보 탭에서 복원할 수 있습니다.`)) return;
+    if (!window.confirm(`${patient.name} 환자가 심사를 원치 않으시나요?\n(심사 대상자) 표시가 해제되고, 사고일로부터 8주가 지나면 '건강보험 전환 요망'으로 표시됩니다. 환자 정보 탭에서 복원할 수 있습니다.`)) return;
     const { error } = await supabase.from("traffic_patients").update({ review_declined: true }).eq("id", patient.id);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    load();
+  };
+
+  // 건강보험 전환 후 종결 처리 (종결 환자 목록에서 복원 가능)
+  const handleCloseTraffic = async (patient) => {
+    if (!window.confirm(`${patient.name} 환자를 종결 처리하시겠습니까?\n(건강보험 전환 완료 후 종결) 종결 후 목록에서 숨겨지며 복원 가능합니다.`)) return;
+    const { error } = await supabase.from("traffic_patients").update({ is_closed: true }).eq("id", patient.id);
     if (error) { alert("저장 실패: " + error.message); return; }
     load();
   };
@@ -638,7 +641,7 @@ export default function Dashboard({
             <span style={{ fontSize:18 }}>🚗</span>
             <span style={{ fontSize:16, fontWeight:700 }}>교통사고 환자</span>
             <span style={{ fontSize:12, color:"var(--ink-muted)" }}>
-              {isToday ? "오늘" : formatDate(selectedDate)} 치료 가능 {treatCount}명{reviewCount > 0 && ` · 심사 대상 ${reviewCount}명`}
+              {isToday ? "오늘" : formatDate(selectedDate)} 치료 가능 {treatCount}명{reviewCount > 0 && ` · 심사 대상 ${reviewCount}명`}{convertCount > 0 && ` · 건강보험 전환 요망 ${convertCount}명`}
             </span>
           </div>
           {!isToday && (
@@ -661,6 +664,7 @@ export default function Dashboard({
                   onNavigate={() => onSelectTrafficPatient(p.id)}
                   onCallLog={setCallModalPatient}
                   onDeclineReview={handleDeclineReview}
+                  onClose={handleCloseTraffic}
                 />
               ))}
             </div>
