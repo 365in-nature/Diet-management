@@ -361,6 +361,110 @@ export function getHerbStatus(prescriptions) {
 }
 
 // =============================================
+// 교통사고 심사 (2026-09-10 이후 사고, 사고일 + 43일 = 7주차 진입)
+// =============================================
+
+export const REVIEW_LAW_START = "2026-09-10";
+export const REVIEW_START_OFFSET = 43;      // 심사 대상 시작 (사고일 + 43일)
+export const REVIEW_DECLINE_CONVERT_OFFSET = 56; // 심사 원치 않으심 → 건보 전환 요망 (사고일 + 8주)
+
+/**
+ * 심사 대상자 여부 (제출 이력 무관, 기본 판정)
+ */
+export function isReviewTarget(patient, targetDate) {
+  if (!patient || !patient.accident_date || patient.review_declined) return false;
+  if (patient.accident_date < REVIEW_LAW_START) return false;
+  return diffDays(patient.accident_date, targetDate) >= REVIEW_START_OFFSET;
+}
+
+/**
+ * 환자의 심사 상태 계산
+ *
+ * @param {object} patient  - traffic_patients 행 (traffic_reviews 배열 포함 가능)
+ * @param {string} targetDate - 기준일 (기본: 오늘)
+ * @returns {{
+ *   key: 'none'|'target'|'reviewing'|'rejected'|'extended'|'convert',
+ *   rank: number,            // 정렬 순위: 1=심사 관련 조치 필요, 2=건보 전환 요망, 9=해당 없음/연장 중
+ *   round: number,           // 최신 차수 (1=1차, 2=재심사 1회 ...)
+ *   submittedAt: string|null,
+ *   extendedUntil: string|null,
+ *   dDay: number|null,       // 연장 만료까지 남은 일수
+ *   convertReason: 'extension_expired'|'declined'|null,
+ *   latest: object|null,
+ * }}
+ */
+export function getReviewStatus(patient, targetDate = today()) {
+  const base = { key: "none", rank: 9, round: 0, submittedAt: null, extendedUntil: null, dDay: null, convertReason: null, latest: null };
+  if (!patient || !patient.accident_date) return base;
+  if (patient.accident_date < REVIEW_LAW_START) return base;
+
+  const reviews = [...(patient.traffic_reviews || [])].sort((a, b) => a.round - b.round);
+  const latest = reviews.length ? reviews[reviews.length - 1] : null;
+
+  // 제출 이력 없음
+  if (!latest) {
+    const elapsed = diffDays(patient.accident_date, targetDate);
+    if (patient.review_declined) {
+      if (elapsed >= REVIEW_DECLINE_CONVERT_OFFSET) {
+        return { ...base, key: "convert", rank: 2, convertReason: "declined" };
+      }
+      return base;
+    }
+    if (elapsed >= REVIEW_START_OFFSET) return { ...base, key: "target", rank: 1 };
+    return base;
+  }
+
+  const common = { ...base, round: latest.round, submittedAt: latest.submitted_at, latest };
+
+  if (latest.result === "pending") return { ...common, key: "reviewing", rank: 1 };
+  if (latest.result === "rejected") return { ...common, key: "rejected", rank: 1 };
+
+  // 연장됨
+  const until = latest.extended_until;
+  if (!until) return { ...common, key: "reviewing", rank: 1 }; // 연장일 미입력 → 입력 필요
+  if (targetDate > until) {
+    return { ...common, key: "convert", rank: 2, extendedUntil: until, convertReason: "extension_expired" };
+  }
+  return { ...common, key: "extended", rank: 9, extendedUntil: until, dDay: diffDays(targetDate, until) };
+}
+
+/**
+ * 심사 상태 배지 표시 정보 반환 (JSX 없이 라벨/스타일만)
+ * @param {ReturnType<typeof getReviewStatus>} st
+ * @returns {{ label: string, style: object } | null}
+ */
+export function getReviewBadgeInfo(st) {
+  if (!st || st.key === "none") return null;
+  const mk = (bg, color, border) => ({
+    background: bg, color, border: `1px solid ${border}`,
+    fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+  });
+  const purple = mk("#f3e8ff", "#6b21a8", "#d8b4fe");
+  const roundLabel = st.round > 1 ? `재심사 ${st.round - 1}차` : "심사";
+
+  switch (st.key) {
+    case "target":
+      return { label: "📋 심사 대상자", style: purple };
+    case "reviewing":
+      if (st.latest && st.latest.result === "extended" && !st.latest.extended_until) {
+        return { label: "⚠️ 연장일 입력 필요", style: mk("#fff3e0", "#c2410c", "#fdba74") };
+      }
+      return { label: `📤 ${roundLabel} 중`, style: purple };
+    case "rejected":
+      return { label: `❌ ${st.round > 1 ? `재심사 ${st.round - 1}차 ` : ""}불승인`, style: mk("#fde8e8", "#b42318", "#f5b5b0") };
+    case "extended": {
+      const d = new Date(st.extendedUntil);
+      const md = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+      return { label: `✅ ~${md} 연장 (D-${st.dDay})`, style: mk("#e6f4ea", "#1e7a3c", "#a8d5b5") };
+    }
+    case "convert":
+      return { label: "🔄 건강보험 전환 요망", style: mk("#fff3e0", "#c2410c", "#fdba74") };
+    default:
+      return null;
+  }
+}
+
+// =============================================
 // 패키지 계산 (다이어트 & 탕약 공통)
 // =============================================
 
